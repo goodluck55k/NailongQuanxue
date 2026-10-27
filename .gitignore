@@ -1,0 +1,57 @@
+# Python virtual environments / caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build outputs and local/private bundles
+build/
+dist/
+*.egg-info/
+*.spec
+*.log
+ScreenBreak*Local*.zip
+ScreenBreak*Private*.zip
+
+# Secrets, editor/OS artifacts
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Old V1 image remains local; only the three declared V1.1 assets are public.
+/assets/overlay.jpg
+/assets/overlay.jpeg
+/assets/overlay.png
+# Ignore all added assets except the explicitly reviewed fixed resources.
+/assets/*
+!/assets/README.md
+!/assets/ASSET_MANIFEST.md
+!/assets/default_break.mp4
+!/assets/fallback_overlay.jpg
+!/assets/ui_reference.png
+
+# Local documentation package ZIP is not an app source file
+/ScreenBreak_V1_GitHub_Codex_Package.zip
+
+# V1.1 private local data, capture output and candidate bundles
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+photos/
+local-data/
+settings.json
+settings.json.*
+pending-events.json
+*.tmp
+NailongQuanxue*.zip

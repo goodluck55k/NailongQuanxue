@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.mp4 -text
+*.jpg -text
+*.png -text
+# Preserve imported upstream notices byte-for-byte, including their whitespace.
+licenses/** -text -whitespace
+# This supplied requirements document uses intentional Markdown hard breaks.
+CODEX_TASKS.md whitespace=-blank-at-eol
