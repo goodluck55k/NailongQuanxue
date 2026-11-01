@@ -75,11 +75,17 @@ def test_manual_300_seconds_not_video_cycles(system, clock):
     assert len(system.events) == 1
 
 
+def verify(system, token):
+    """V2 order: declaration → watch demo → verified clip."""
+    assert system.mark_video_watched(token)
+    assert system.mark_verified(token)
+
+
 def test_old_workflow_cancelled_at_usage_deadline(system, clock):
     system.start(15)
     token = system.request_surrender()
     assert system.accept_writing(token, DECLARATION)
-    assert system.mark_captured(token)
+    verify(system, token)
     clock.advance(15)
     assert system.confirm_surrender(token) is None
     assert system.phase == Phase.BREAK_ACTIVE
@@ -93,7 +99,7 @@ def test_break_completion_wins_confirmation_race(system, clock):
     system.poll()
     token = system.request_surrender()
     system.accept_writing(token, DECLARATION)
-    system.mark_captured(token)
+    verify(system, token)
     clock.advance(BREAK_SECONDS)
     assert system.confirm_surrender(token) is None
     assert [e.event_type for e in system.events] == ["BREAK_COMPLETED"]
@@ -110,8 +116,15 @@ def test_surrender_ends_entire_auto_loop_once(system, clock, break_stage, kind):
     for invalid in ("", " 我是废物", "我是废物 ", "我是废勿"):
         assert not system.accept_writing(token, invalid)
     assert system.accept_writing(token, DECLARATION)
+    # Watching the demo and passing the vision check are separate gates.
     assert system.confirm_surrender(token) is None
-    system.mark_captured(token)
+    assert system.stage(token) == "video"
+    assert not system.mark_verified(token)
+    assert system.mark_video_watched(token)
+    assert system.stage(token) == "recording"
+    assert system.retake(token)
+    assert system.stage(token) == "recording"
+    assert system.mark_verified(token)
     event = system.confirm_surrender(token)
     assert event.event_type == kind
     assert event.declaration_confirmed
@@ -123,7 +136,7 @@ def test_lock_invalidates_photo_and_never_reopens_camera(system):
     system.start(60)
     token = system.request_surrender()
     system.accept_writing(token, DECLARATION)
-    system.mark_captured(token)
+    verify(system, token)
     system.session_pause("lock", True)
     system.session_pause("lock", False)
     assert system.workflow is None

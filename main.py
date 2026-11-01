@@ -42,7 +42,7 @@ def main():
     configure_logging()
     app = QApplication(sys.argv[:1])
     app.setApplicationName("奶龙劝学")
-    app.setApplicationVersion("1.1.0")
+    app.setApplicationVersion("2.0.0")
     app.setQuitOnLastWindowClosed(False)
     window = MainWindow()
 

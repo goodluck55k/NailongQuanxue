@@ -14,5 +14,7 @@ QTabBar::tab {background:#F7EED8; padding:12px 18px;}
 QTabBar::tab:selected {background:#FFCE54;}
 QTableWidget {background:white; border:1px solid #E3D7C1; gridline-color:#F0E6D4;}
 QHeaderView::section {background:#FFF4D8; padding:8px; border:0;}
+QProgressBar {background:#F5EBD6; border:1px solid #E3D7C1; border-radius:6px; height:8px;}
+QProgressBar::chunk {background:#FFCE54; border-radius:5px;}
 QLabel#muted {color:#887963;}
 """

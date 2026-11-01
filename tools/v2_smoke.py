@@ -1,6 +1,8 @@
-"""Visible Windows source smoke. --full-break runs a real 300-second break.
+"""Visible Windows source smoke for V2.0. --full-break runs a real 300-second break.
 
-No real camera image is captured by this test. Data and screenshots stay in build.
+This machine has no camera: the recording path is exercised only up to the
+"no camera" error message, and the vision call is never made. Data and
+screenshots stay in build.
 """
 import argparse
 import json
@@ -16,10 +18,10 @@ sys.path.insert(0, str(ROOT))
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full-break", action="store_true")
-    parser.add_argument("--report", type=Path, default=ROOT / "build" / "v11-native-smoke.json")
+    parser.add_argument("--report", type=Path, default=ROOT / "build" / "v2-native-smoke.json")
     args = parser.parse_args()
     os.environ["QT_QPA_PLATFORM"] = "windows"
-    os.environ["NAILONG_DATA_DIR"] = str(ROOT / "build" / ("full-break-data" if args.full_break else "native-smoke-data"))
+    os.environ["NAILONG_DATA_DIR"] = str(ROOT / "build" / ("v2-full-break-data" if args.full_break else "v2-native-smoke-data"))
     from PySide6.QtCore import QTimer, Qt
     from PySide6.QtMultimedia import QMediaDevices
     from PySide6.QtTest import QTest
@@ -37,7 +39,8 @@ def main():
     report = {"platform": app.platformName(), "full_300s_break": args.full_break,
               "screens": [{"geometry": [s.geometry().width(), s.geometry().height()], "dpr": s.devicePixelRatio()}
                           for s in app.screens()], "camera_devices": len(QMediaDevices.videoInputs()),
-              "session_notifications_registered": bridge.registered, "checks": [], "countdown": [],
+              "session_notifications_registered": bridge.registered,
+              "ai_configured": win.ai_settings.configured, "checks": [], "countdown": [],
               "loops_observed": 0}
     phase = "usage"
     start = time.monotonic()
@@ -55,6 +58,17 @@ def main():
         win.close()
         app.exit(code)
 
+    def check_prompt():
+        # The first-run reminder must appear once and must not block the timer.
+        if win.ai_settings.configured:
+            report["checks"].append("AI already configured: no first-run reminder")
+            return
+        assert win.ai_dialog is not None, "first-run AI reminder did not appear"
+        report["ai_prompt_title"] = win.ai_dialog.windowTitle()
+        win.ai_dialog.reject()
+        assert win.surrender is None and win.controller.phase == Phase.IDLE
+        report["checks"].append("first-run AI reminder appears and can be postponed")
+
     def inspect():
         nonlocal phase, last_position, break_start, last_checkpoint
         try:
@@ -64,7 +78,7 @@ def main():
                 checkpoint = {"elapsed_seconds": round(elapsed_now, 2), "phase": phase,
                               "core_phase": win.controller.phase.value, "ring": win.ring.text,
                               "loops": report["loops_observed"]}
-                (args.report.parent / "v11-smoke-checkpoint.json").write_text(json.dumps(checkpoint), encoding="utf-8")
+                (args.report.parent / "v2-smoke-checkpoint.json").write_text(json.dumps(checkpoint), encoding="utf-8")
             if phase == "usage":
                 if win.reminder.mode == "final":
                     text = win.reminder.label.text().splitlines()[-1]
@@ -95,14 +109,19 @@ def main():
                     assert primary.release_button.isVisible()
                     assert not hasattr(primary, "emergency_button")
                     QTest.mouseClick(primary.release_button, Qt.MouseButton.LeftButton)
-                    assert win.surrender is not None
+                    dialog = win.surrender
+                    assert dialog is not None
+                    dialog.declaration.setText("我是废物")
+                    dialog.next_step()
+                    assert dialog.pages.currentIndex() == 1
+                    QTest.mouseClick(dialog.start_record_button, Qt.MouseButton.LeftButton)
                     if report["camera_devices"] == 0:
-                        win.surrender.declaration.setText("我是废物")
-                        win.surrender.next_step()
-                        assert "没有可用摄像头" in win.surrender.message.text()
-                        report["checks"].append("real no-camera error and cancellation available")
-                    win.surrender.reject()
+                        assert "没有可用摄像头" in dialog.record_status.text(), dialog.record_status.text()
+                        assert not dialog.confirm_button.isEnabled()
+                        report["checks"].append("real no-camera error, confirmation stays disabled")
+                    dialog.reject()
                     report["checks"].append("surrender cancellation leaves break running")
+                    assert win.surrender is None and win.screens.active
                     phase = "full" if args.full_break else "emergency"
             elif phase == "emergency":
                 win.tray.emergency_action.trigger()
@@ -152,7 +171,8 @@ def main():
             report["error"] = f"{type(error).__name__}: {error}"
             finish(1)
 
-    win.grab().save(str(args.report.parent / "v11-main-native.png"))
+    win.grab().save(str(args.report.parent / "v2-main-native.png"))
+    QTimer.singleShot(200, check_prompt)
     win.start_timer(15)
     QTimer.singleShot(1000, win.showMinimized)
     timer = QTimer()

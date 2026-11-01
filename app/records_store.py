@@ -1,4 +1,8 @@
-"""Versioned local archive. Deleting an archive never deletes unrelated files."""
+"""Versioned local archive. Deleting an archive never deletes unrelated files.
+
+V1.1 rows keep their photo columns; V2 adds the clip and the vision verdict.
+Both are additive migrations, and an older database is snapshotted first.
+"""
 import json
 from pathlib import Path
 import sqlite3
@@ -8,7 +12,9 @@ from .supervision import Event
 FIELDS = {"event_id": "TEXT PRIMARY KEY", "occurred_at": "TEXT", "event_type": "TEXT",
           "mode": "TEXT", "round_index": "INTEGER", "configured_seconds": "REAL",
           "usage_seconds": "REAL", "break_seconds": "REAL", "declaration_confirmed": "INTEGER",
-          "photo_status": "TEXT", "photo_path": "TEXT"}
+          "photo_status": "TEXT", "photo_path": "TEXT",
+          "video_status": "TEXT", "video_path": "TEXT", "ai_cycles": "INTEGER", "ai_reason": "TEXT"}
+SCHEMA_VERSION = 3
 
 
 class RecordsStore:
@@ -18,13 +24,14 @@ class RecordsStore:
         self.connection = sqlite3.connect(self.path, timeout=0.1)
         self.connection.row_factory = sqlite3.Row
         version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if version > 2:
+        if version > SCHEMA_VERSION:
             self.connection.close()
             raise sqlite3.DatabaseError("档案版本较新，请勿用旧版本覆盖")
         existing = self.connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
-        if existing and version < 2:
-            # Snapshot before an additive migration; never rewrite a shared DB.
-            target = self.path.with_suffix(".pre-v11.sqlite3")
+        if existing and version < SCHEMA_VERSION:
+            # Snapshot before an additive migration; never rewrite a shared DB in place.
+            legacy = ".pre-v11.sqlite3" if version < 2 else ".pre-v3.sqlite3"
+            target = self.path.with_suffix(legacy)
             if not target.exists():
                 with sqlite3.connect(target) as backup:
                     self.connection.backup(backup)
@@ -35,8 +42,11 @@ class RecordsStore:
             for name, kind in FIELDS.items():
                 if name not in columns:
                     self.connection.execute(f"ALTER TABLE events ADD COLUMN {name} {kind.replace(' PRIMARY KEY', '')}")
+            # Rows written by V1.1 have no clip; label them instead of leaving NULL.
+            self.connection.execute(
+                "UPDATE events SET video_status='not_applicable' WHERE video_status IS NULL")
             self.connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS event_identifier ON events(event_id)")
-            self.connection.execute("PRAGMA user_version=2")
+            self.connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def append(self, event: Event):
         values = event.to_dict()
@@ -54,18 +64,25 @@ class RecordsStore:
         counts["SURRENDERS"] = counts.get("EARLY_SURRENDER", 0) + counts.get("BREAK_SURRENDER", 0)
         return counts
 
-    def delete_photo(self, event_id):
-        row = self.connection.execute("SELECT photo_path FROM events WHERE event_id=?", (event_id,)).fetchone()
+    def _delete_media(self, event_id, column, status_column, suffix):
+        row = self.connection.execute(f"SELECT {column} FROM events WHERE event_id=?", (event_id,)).fetchone()
         if not row:
             return
         if row[0]:
             path = Path(row[0])
             # Only paths explicitly stored by the application can be selected.
-            if path.suffix.lower() != ".jpg" or path.is_symlink():
-                raise ValueError("照片路径异常，未删除")
+            if path.suffix.lower() != suffix or path.is_symlink():
+                raise ValueError("媒体路径异常，未删除")
             path.unlink(missing_ok=True)
         with self.connection:
-            self.connection.execute("UPDATE events SET photo_status='deleted',photo_path=NULL WHERE event_id=?", (event_id,))
+            self.connection.execute(
+                f"UPDATE events SET {status_column}='deleted',{column}=NULL WHERE event_id=?", (event_id,))
+
+    def delete_photo(self, event_id):
+        self._delete_media(event_id, "photo_path", "photo_status", ".jpg")
+
+    def delete_video(self, event_id):
+        self._delete_media(event_id, "video_path", "video_status", ".mp4")
 
     def delete_event(self, event_id):
         with self.connection:
@@ -75,6 +92,11 @@ class RecordsStore:
         with self.connection:
             for path in paths:
                 self.connection.execute("UPDATE events SET photo_status='deleted',photo_path=NULL WHERE photo_path=?", (str(path),))
+
+    def mark_videos_deleted(self, paths):
+        with self.connection:
+            for path in paths:
+                self.connection.execute("UPDATE events SET video_status='deleted',video_path=NULL WHERE video_path=?", (str(path),))
 
     def clear(self):
         with self.connection:

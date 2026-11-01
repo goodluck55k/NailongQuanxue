@@ -1,7 +1,8 @@
-"""V1 window upgraded in place to V1.1's single-page supervision UI."""
+"""V1 window upgraded in place to V2.0's single-page supervision UI."""
 import json
 import sqlite3
 import time
+from pathlib import Path
 from shiboken6 import isValid
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -9,32 +10,34 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect, 
                                QLabel, QMainWindow, QMessageBox, QPushButton, QSpinBox,
                                QScrollArea, QVBoxLayout, QWidget)
 
-from .camera_capture import CameraCapture
+from .ai_config import read_settings
+from .ai_panel import AiSetupDialog
+from .camera_recorder import CameraRecorder
 from .config_store import ConfigStore, duration_from_parts
-from .photo_storage import PhotoStorage
 from .records_store import RecordsStore
 from .reminder_window import ReminderWindow
 from .resources import fallback_asset
 from .screen_manager import ScreenManager
 from .settings_dialog import SettingsDialog
 from .supervision import Event, Phase, Supervision
-from .surrender_dialog import SurrenderDialog
+from .surrender_dialog import LiveVerifier, SurrenderDialog
 from .theme import STYLE
 from .timer_controller import format_time
 from .timer_ring import TimerRing
 from .tray_controller import TrayController, application_icon
+from .video_archive import VideoArchive
 
 
 class MainWindow(QMainWindow):
     quit_requested = Signal()
 
-    def __init__(self, controller=None, config=None, records=None, camera_factory=CameraCapture):
+    def __init__(self, controller=None, config=None, records=None, camera_factory=CameraRecorder):
         super().__init__()
         self.controller = controller or Supervision()
         self.config = config or ConfigStore()
         self.camera_factory = camera_factory
         self._closing = False
-        self.surrender = self.settings = self.emergency_dialog = None
+        self.surrender = self.settings = self.emergency_dialog = self.ai_dialog = None
         self._last_phase = Phase.IDLE
         self._completed = False
         self._owns_records = records is None
@@ -56,6 +59,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("奶龙劝学")
         self.setWindowIcon(application_icon())
         self.setStyleSheet(STYLE)
+        self.ai_settings = read_settings(self.config.values)
+        self.verifier = LiveVerifier(self.ai_settings)
+        self.ai_prompt_pending = True
         area = QApplication.primaryScreen().availableGeometry()
         self.resize(min(960, area.width() - 32), min(700, area.height() - 48))
         self.setMinimumSize(min(640, area.width() - 32), min(460, area.height() - 48))
@@ -79,11 +85,18 @@ class MainWindow(QMainWindow):
         brand.addWidget(subtitle)
         header.addLayout(brand)
         header.addStretch()
+        self.ai_config_button = QPushButton("配置 AI")
+        self.ai_config_button.setObjectName("secondaryButton")
+        self.ai_config_button.clicked.connect(self.open_ai_setup)
+        header.addWidget(self.ai_config_button, 0, Qt.AlignmentFlag.AlignTop)
         self.settings_button = QPushButton("⚙  设置")
         self.settings_button.setObjectName("secondaryButton")
         self.settings_button.clicked.connect(self.open_settings)
         header.addWidget(self.settings_button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
+        self.ai_status = QLabel()
+        self.ai_status.setObjectName("muted")
+        layout.addWidget(self.ai_status)
         card = QFrame()
         card.setObjectName("mainCard")
         shadow = QGraphicsDropShadowEffect(card)
@@ -167,6 +180,48 @@ class MainWindow(QMainWindow):
         self._idle_duration_changed()
         if self._data_error or self.config.error:
             self.status_label.setText(self._data_error or self.config.error)
+        self.refresh_ai()
+        QTimer.singleShot(0, self.maybe_prompt_ai)
+
+    def refresh_ai(self):
+        self.ai_settings = read_settings(self.config.values)
+        self.verifier = LiveVerifier(self.ai_settings)
+        self.ai_status.setText(self.ai_settings.status_text())
+        self.ai_config_button.setText("配置 AI" if not self.ai_settings.configured else "AI 设置")
+        if self.surrender is not None and isValid(self.surrender):
+            self.surrender.update_ai_note(self.ai_settings.status_text())
+
+    def maybe_prompt_ai(self):
+        if self._closing or not self.ai_prompt_pending:
+            return
+        self.ai_prompt_pending = False
+        if not self.ai_settings.configured:
+            self.open_ai_setup()
+
+    def open_ai_setup(self, *_):
+        if self.ai_dialog is not None and isValid(self.ai_dialog):
+            self.ai_dialog.showNormal()
+            self.ai_dialog.raise_()
+            self.ai_dialog.activateWindow()
+            return
+        dialog = AiSetupDialog(self.config, self)
+        self.ai_dialog = dialog
+        dialog.configured.connect(self._ai_configured)
+        dialog.finished.connect(lambda *_: self._ai_closed())
+        dialog.show()
+        self.center_dialog(dialog)
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _ai_configured(self, settings):
+        self.refresh_ai()
+        self.status_label.setText("AI 接入已配置：动作挑战可以进行核验。")
+
+    def _ai_closed(self):
+        if self.ai_dialog is not None:
+            dialog, self.ai_dialog = self.ai_dialog, None
+            dialog.deleteLater()
+        self.refresh_ai()
 
     def input_seconds(self):
         return duration_from_parts(self.minutes.lineEdit().text(), self.seconds.lineEdit().text())
@@ -297,10 +352,13 @@ class MainWindow(QMainWindow):
         if token is None:
             self.tick()
             return
-        dialog = SurrenderDialog(self.controller, token, self, self.camera_factory)
+        dialog = SurrenderDialog(self.controller, token, self, self.camera_factory,
+                                 verifier=LiveVerifier(self.ai_settings))
         self.surrender = dialog
         dialog.confirm_requested.connect(self.confirm_surrender)
+        dialog.ai_setup_requested.connect(self.open_ai_setup)
         dialog.finished.connect(lambda *_: self._surrender_closed(token))
+        dialog.update_ai_note(self.ai_settings.status_text())
         dialog.show()
         self.center_dialog(dialog)
         dialog.declaration.setFocus()
@@ -320,24 +378,36 @@ class MainWindow(QMainWindow):
             dialog.reject()
             dialog.deleteLater()
 
-    def confirm_surrender(self, token, jpeg_bytes):
+    def confirm_surrender(self, token, clip_path, verdict=None):
         event = self.controller.confirm_surrender(token)
         self.cancel_surrender()
         if event is None:
             self.tick()
             return
+        if verdict is not None:
+            event.ai_cycles = verdict.cycles
+            event.ai_reason = (verdict.reason or "")[:200]
+        # The clip is the evidence for this surrender; a failed archive write must
+        # never block a challenge that was already verified.
         try:
-            saved = PhotoStorage(self.config.values["photo_directory"]).save_confirmed(jpeg_bytes, event.event_type)
-            event.photo_status, event.photo_path = saved.status, saved.path
-        except (OSError, ValueError):
-            event.photo_status = "save_failed"
+            saved = VideoArchive(self.config.values.get("video_directory", "")).save_confirmed(
+                Path(clip_path) if clip_path else Path(), event.event_type)
+            event.video_status, event.video_path = saved.status, saved.path
+        except (OSError, ValueError, TypeError):
+            event.video_status = "save_failed"
+        finally:
+            if clip_path:
+                try:
+                    Path(clip_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
         self.pending_events.append(event)
         self.tick()
-        if event.photo_status == "quota_exceeded":
-            self.status_label.setText("已结束监督。照片超过 100 MB 配额，未保存新照片。" +
+        if event.video_status == "quota_exceeded":
+            self.status_label.setText("已结束监督。录像超过 512 MB 配额，未保存新录像。" +
                                       ("档案待保存，请检查数据目录。" if self.pending_events else "档案已记录。"))
-        elif event.photo_status == "save_failed":
-            self.status_label.setText("已结束监督，照片未能保存。请检查照片目录；档案标记为保存失败。")
+        elif event.video_status == "save_failed":
+            self.status_label.setText("已结束监督，录像未能保存。请检查录像目录；档案标记为保存失败。")
         self.restore()
 
     def request_emergency(self):
@@ -400,6 +470,7 @@ class MainWindow(QMainWindow):
             return
         dialog = SettingsDialog(self.config, self.records, self)
         self.settings = dialog
+        dialog.ai_changed.connect(self._ai_configured)
         dialog.finished.connect(self._settings_closed)
         dialog.show()
         self.center_dialog(dialog)
@@ -457,7 +528,7 @@ class MainWindow(QMainWindow):
         self.refresh.stop()
         self.controller.stop()
         self.cancel_surrender()
-        for dialog in (self.settings, self.emergency_dialog):
+        for dialog in (self.settings, self.emergency_dialog, self.ai_dialog):
             if dialog is not None:
                 dialog.close()
         self.reminder.clear()

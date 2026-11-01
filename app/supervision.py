@@ -1,4 +1,10 @@
-"""V1.1 coordinator, reusing V1 TimerController's tested reminder/deadline core."""
+"""V1.1 coordinator, reusing V1 TimerController's tested reminder/deadline core.
+
+V2 inserts the action-imitation challenge between the declaration and the final
+confirmation: writing -> video -> recording -> verified. Only a challenge that
+the vision check has accepted reaches ``verified``, and only ``verified`` may
+finish the supervision.
+"""
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
@@ -10,6 +16,7 @@ from .usage_clock import ActiveClock
 
 BREAK_SECONDS = 300
 DECLARATION = "我是废物"
+STAGES = ("writing", "video", "recording", "verified")
 
 
 class Phase(str, Enum):
@@ -31,6 +38,10 @@ class Event:
     declaration_confirmed: bool = False
     photo_status: str = "not_applicable"
     photo_path: str | None = None
+    video_status: str = "not_applicable"
+    video_path: str | None = None
+    ai_cycles: int | None = None
+    ai_reason: str | None = None
 
     def to_dict(self):
         return asdict(self)
@@ -129,28 +140,45 @@ class Supervision:
                     and self.workflow["phase"] == self.phase
                     and self.workflow["round"] == self.round_index)
 
+    def stage(self, token):
+        return self.workflow["stage"] if self.valid(token) else None
+
     def accept_writing(self, token, text):
         self.poll()
         if self.valid(token) and self.workflow["stage"] == "writing" and text == DECLARATION:
-            self.workflow["stage"] = "camera"
+            self.workflow["stage"] = "video"
             return True
         return False
 
-    def mark_captured(self, token):
+    def mark_video_watched(self, token):
         self.poll()
-        if self.valid(token) and self.workflow["stage"] in ("camera", "preview"):
-            self.workflow["stage"] = "preview"
+        if self.valid(token) and self.workflow["stage"] in ("video", "recording"):
+            self.workflow["stage"] = "recording"
             return True
         return False
+
+    def mark_verified(self, token):
+        self.poll()
+        if self.valid(token) and self.workflow["stage"] in ("recording", "verified"):
+            self.workflow["stage"] = "verified"
+            return True
+        return False
+
+    # V1.1 name, still used by the older workflow tests and callers.
+    def mark_captured(self, token):
+        return self.mark_verified(token)
 
     def retake(self, token):
-        if self.valid(token):
-            self.workflow["stage"] = "camera"
+        self.poll()
+        if self.valid(token) and self.workflow["stage"] in ("recording", "verified"):
+            self.workflow["stage"] = "recording"
+            return True
+        return False
 
     def confirm_surrender(self, token):
         # This check and transition run in the Qt main thread before any write.
         self.poll()
-        if not self.valid(token) or self.workflow["stage"] != "preview":
+        if not self.valid(token) or self.workflow["stage"] != "verified":
             return None
         kind = "EARLY_SURRENDER" if self.phase == Phase.RUNNING else "BREAK_SURRENDER"
         event = self._event(kind, declaration=True)

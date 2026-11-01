@@ -142,3 +142,62 @@ def test_settings_delete_marks_archives_but_clear_does_not_delete_photos(tmp_pat
     store.clear()
     assert photo.exists()
     store.close()
+
+
+def test_video_columns_and_deletion_round_trip(tmp_path):
+    store = RecordsStore(tmp_path / "records.sqlite3")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    event = make_event("EARLY_SURRENDER", "video")
+    event.video_status, event.video_path = "saved", str(clip)
+    event.ai_cycles, event.ai_reason = 2, "两组前倾回正"
+    store.append(event)
+    row = store.all()[0]
+    assert row["video_status"] == "saved" and row["video_path"] == str(clip)
+    assert row["ai_cycles"] == 2 and row["ai_reason"] == "两组前倾回正"
+    store.delete_video("video")
+    assert not clip.exists()
+    assert store.all()[0]["video_status"] == "deleted"
+    assert store.all()[0]["video_path"] is None
+    store.close()
+
+
+def test_delete_video_refuses_other_suffixes_and_missing_files(tmp_path):
+    store = RecordsStore(tmp_path / "records.sqlite3")
+    other = tmp_path / "clip.avi"
+    other.write_bytes(b"x")
+    event = make_event("EARLY_SURRENDER", "wrong")
+    event.video_status, event.video_path = "saved", str(other)
+    store.append(event)
+    with pytest.raises(ValueError):
+        store.delete_video("wrong")
+    assert other.exists()
+    store.delete_video("does-not-exist")
+    store.close()
+
+
+def test_v2_archive_is_backed_up_before_v3_migration(tmp_path):
+    path = tmp_path / "records.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE events(event_id TEXT PRIMARY KEY,occurred_at TEXT,event_type TEXT,"
+            "mode TEXT,round_index INTEGER,configured_seconds INTEGER,usage_seconds INTEGER,"
+            "break_seconds INTEGER,declaration_confirmed INTEGER,photo_status TEXT,photo_path TEXT)")
+        connection.execute(
+            "INSERT INTO events VALUES ('v2','2026-10-27T16:00:00+08:00','EARLY_SURRENDER',"
+            "'automatic',2,90,70,20,1,'saved',NULL)")
+        connection.execute("PRAGMA user_version = 2")
+    store = RecordsStore(path)
+    row = store.all()[0]
+    assert row["event_id"] == "v2"
+    assert row["video_status"] == "not_applicable"
+    assert row["video_path"] is None
+    assert row["ai_cycles"] is None
+    assert path.with_suffix(".pre-v3.sqlite3").exists()
+    store.close()
+
+
+def test_video_directory_defaults_inside_data_directory(tmp_path):
+    config = ConfigStore(tmp_path)
+    assert config.values["video_directory"] == str(tmp_path / "videos")
+    assert config.values["schema_version"] == 3

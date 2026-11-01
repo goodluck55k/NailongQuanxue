@@ -24,7 +24,8 @@ class ConfigStore:
         self.root = Path(root) if root is not None else data_directory()
         self.path = self.root / "settings.json"
         self.values = {"minutes": 30, "seconds": 0, "mode": "manual",
-                       "photo_directory": str(self.root / "photos"), "schema_version": 2}
+                       "photo_directory": str(self.root / "photos"),
+                       "video_directory": str(self.root / "videos"), "schema_version": 3}
         self.error = None
         source = self.path
         legacy = self.root.parent / "ScreenBreak" / "settings.json"
@@ -47,7 +48,7 @@ class ConfigStore:
                 self.error = "配置无法读取，已安全进入待机；原配置文件保留。"
 
     def save(self, **changes):
-        values = self.values | changes | {"schema_version": 2}
+        values = self.values | changes | {"schema_version": 3}
         duration_from_parts(values["minutes"], values["seconds"])
         if values["mode"] not in ("manual", "automatic"):
             raise ValueError("Invalid mode")

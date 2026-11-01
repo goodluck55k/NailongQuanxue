@@ -1,7 +1,8 @@
 """Windows EXE smoke test using messages targeted only to the launched process.
 
-Launches a visible 15-second timer, minimizes it, checks top-level windows and
-opens the release dialog and exercises its sole footer cancel action.
+Launches a visible 15-second timer, dismisses the first-run AI reminder,
+minimizes the window, checks top-level windows and opens the release dialog and
+exercises its sole footer cancel action.
 The harness terminates only its own test process after checking the active break;
 this does not verify normal application exit. No camera, screenshots or global hooks.
 """
@@ -92,10 +93,19 @@ def main():
         env = dict(os.environ)
         env.pop("QT_QPA_PLATFORM", None)
         env["LOCALAPPDATA"] = str(args.report.parent / "exe-localappdata")
-        env["NAILONG_DATA_DIR"] = str(args.report.parent / "v11-exe-data")
+        env["NAILONG_DATA_DIR"] = str(args.report.parent / "v2-exe-data")
         process = subprocess.Popen([str(args.executable.resolve()), "--test-seconds", "15"],
                                    cwd=working, env=env)
         main_hwnd = wait_for(lambda: find("奶龙劝学"))[0]
+        # V2.0: without a configured vision endpoint the first-run reminder opens
+        # on top. Close it through the window manager, exactly as a user would
+        # with "稍后配置", and confirm the timer keeps running.
+        ai_prompts = wait_for(lambda: find("奶龙劝学 — 配置视觉 AI"), timeout=12)
+        for hwnd in ai_prompts:
+            user.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE -> QDialog.reject
+        wait_for(lambda: not find("奶龙劝学 — 配置视觉 AI"))
+        assert process.poll() is None
+        report["checks"].append("first-run AI reminder appears and can be postponed")
         user.ShowWindow(main_hwnd, 6)
         assert user.IsIconic(main_hwnd)
         report["checks"].append("EXE starts from a different working directory and minimizes")
@@ -125,6 +135,7 @@ def main():
         click_button(surrender, surrender=True)
         wait_for(lambda: not find("奶龙投降书"))
         assert not find("紧急退出监督")
+        assert not find("奶龙劝学 — 配置视觉 AI")
         assert len(find("奶龙劝学 — 五分钟休息")) == len(overlays)
         report["checks"].append("sole surrender footer action cancels dialog and preserves active break")
         report["normal_application_exit_verified"] = False
