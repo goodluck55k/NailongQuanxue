@@ -76,6 +76,7 @@ def test_evidence_checks():
 def test_prompt_states_the_rules_and_the_json_contract():
     text = prompt_for(8, 11.5)
     for fragment in ("前倾", "回正", "两组", "腹部", "不要求声音", "11.5 秒", "8 张",
+                     "按时间顺序", "相邻两帧间隔约 1.64 秒",
                      "motion_cycles", "无法确定时判定未通过"):
         assert fragment in text
     assert "```" not in text

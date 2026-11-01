@@ -5,6 +5,8 @@ own vision model to verify it, and hands the confirmed clip path upwards. A
 technical failure (no configuration, network error, unparsable reply) can never
 enable the confirmation button.
 """
+from pathlib import Path
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QProgressBar,
@@ -163,6 +165,10 @@ class SurrenderDialog(QDialog):
                                   "至少一只手放在腹部附近，身体前倾回正两组；画面保持安静稳定，不需要说话。")
         self.record_note.setWordWrap(True)
         box.addWidget(self.record_note)
+        self.upload_note = QLabel()
+        self.upload_note.setObjectName("muted")
+        self.upload_note.setWordWrap(True)
+        box.addWidget(self.upload_note)
         self.preview = ImageView()
         box.addWidget(self.preview, 1)
         self.progress_bar = QProgressBar()
@@ -218,6 +224,12 @@ class SurrenderDialog(QDialog):
         self.ai_note.setText(status_text)
         configured = "未配置" not in status_text
         self.ai_button.setVisible(not configured)
+        host = getattr(getattr(self.verifier, "settings", None), "host", "")
+        if configured and host:
+            self.upload_note.setText(
+                f"录制结束后只把少量画面帧发送到 {host} 做判定（计入你的账号费用），原录像留在本机。")
+        else:
+            self.upload_note.setText("未配置视觉 AI 时无法上传画面，动作挑战不会通过。")
 
     def next_step(self):
         if not self.controller.accept_writing(self.token, self.declaration.text()):
@@ -408,6 +420,13 @@ class SurrenderDialog(QDialog):
             self.recorder.stop()
             self.recorder.deleteLater()
             self.recorder = None
+        # A clip that was never confirmed must not linger in the temp folder.
+        if self.clip_path:
+            try:
+                Path(self.clip_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            self.clip_path = None
         self.declaration.clear()
         self.preview.show_image(QImage())
         self.thumb.show_image(QImage())

@@ -77,11 +77,14 @@ def check_evidence(frame_count, span_ms, clip_ms, min_frames=MIN_FRAMES, min_spa
 
 
 def prompt_for(frame_count, span_seconds):
+    step = span_seconds / (frame_count - 1) if frame_count > 1 else 0.0
     return (
         "用户需要模仿“奶龙大笑”的动作：一只手放在腹部附近，身体明显前倾再回正，"
         "连续完成至少两组。“前倾—回正”算一组；只摆一个姿势不动、只前倾不回正、"
         "或只有一组，都不算通过。不要求声音、音色、音高或面部表情。\n"
-        f"下面是按时间顺序从同一段 {span_seconds:.1f} 秒录像中均匀抽取的 {frame_count} 张画面。\n"
+        f"下面是按时间顺序从同一段 {span_seconds:.1f} 秒录像中均匀抽取的 {frame_count} 张画面："
+        f"第 1 帧约 0.0 秒，相邻两帧间隔约 {step:.2f} 秒，最后一帧约 {span_seconds:.1f} 秒。"
+        "请按这个顺序判断动作是否发生。\n"
         "判断规则：\n"
         "1. 只依据画面中可见的身体姿态；画面静止或变化轻微时判定未通过。\n"
         "2. 两组动作必须是两次可见的“前倾—回正”，前后姿态要有明显差异。\n"

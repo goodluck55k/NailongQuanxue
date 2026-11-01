@@ -10,9 +10,9 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect, 
                                QLabel, QMainWindow, QMessageBox, QPushButton, QSpinBox,
                                QScrollArea, QVBoxLayout, QWidget)
 
-from .ai_config import read_settings
+from .ai_config import migrate_plain_key, read_settings
 from .ai_panel import AiSetupDialog
-from .camera_recorder import CameraRecorder
+from .camera_recorder import CameraRecorder, cleanup_stale_clips
 from .config_store import ConfigStore, duration_from_parts
 from .records_store import RecordsStore
 from .reminder_window import ReminderWindow
@@ -180,10 +180,18 @@ class MainWindow(QMainWindow):
         self._idle_duration_changed()
         if self._data_error or self.config.error:
             self.status_label.setText(self._data_error or self.config.error)
+        try:
+            cleanup_stale_clips()
+        except Exception:
+            pass  # Housekeeping must never prevent the window from opening.
         self.refresh_ai()
         QTimer.singleShot(0, self.maybe_prompt_ai)
 
     def refresh_ai(self):
+        try:
+            migrate_plain_key(self.config)
+        except Exception:
+            pass  # A failed migration must never block the window.
         self.ai_settings = read_settings(self.config.values)
         self.verifier = LiveVerifier(self.ai_settings)
         self.ai_status.setText(self.ai_settings.status_text())
@@ -380,15 +388,16 @@ class MainWindow(QMainWindow):
 
     def confirm_surrender(self, token, clip_path, verdict=None):
         event = self.controller.confirm_surrender(token)
-        self.cancel_surrender()
         if event is None:
+            self.cancel_surrender()
             self.tick()
             return
         if verdict is not None:
             event.ai_cycles = verdict.cycles
             event.ai_reason = (verdict.reason or "")[:200]
-        # The clip is the evidence for this surrender; a failed archive write must
-        # never block a challenge that was already verified.
+        # Copy the clip before the dialog teardown releases the recorder: cleanup
+        # removes the temporary file, so archiving afterwards would always fail.
+        # A failed archive write must never block an already verified surrender.
         try:
             saved = VideoArchive(self.config.values.get("video_directory", "")).save_confirmed(
                 Path(clip_path) if clip_path else Path(), event.event_type)
@@ -401,6 +410,7 @@ class MainWindow(QMainWindow):
                     Path(clip_path).unlink(missing_ok=True)
                 except OSError:
                     pass
+        self.cancel_surrender()
         self.pending_events.append(event)
         self.tick()
         if event.video_status == "quota_exceeded":

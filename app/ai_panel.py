@@ -62,7 +62,11 @@ class AiSettingsPanel(QWidget):
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        self.hint = QLabel("未配置时无法通过动作挑战解除限制；五分钟休息自动结束与紧急退出不受影响。")
+        self.hint = QLabel(
+            "未配置时无法通过动作挑战解除限制；五分钟休息自动结束与紧急退出不受影响。\n"
+            "判定只把你选中一轮动作的少量画面帧发送到上面这个服务地址，"
+            "原录像留在本机；请求会计入你自己账号的费用，可随时在这里清空配置撤回授权。"
+            "密钥用 Windows 账户加密后保存在本机。")
         self.hint.setObjectName("muted")
         self.hint.setWordWrap(True)
         layout.addWidget(self.hint)

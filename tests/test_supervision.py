@@ -132,6 +132,24 @@ def test_surrender_ends_entire_auto_loop_once(system, clock, break_stage, kind):
     assert system.phase == Phase.IDLE
 
 
+def test_stale_token_after_next_round_cannot_verify(system, clock):
+    """A late vision result for an earlier round must never mark the new one."""
+    system.start(1, "automatic")
+    clock.advance(1)
+    system.poll()
+    token = system.request_surrender()
+    assert system.accept_writing(token, DECLARATION)
+    clock.advance(BREAK_SECONDS)
+    system.poll()
+    assert system.round_index == 2
+    assert system.stage(token) is None
+    assert not system.valid(token)
+    assert not system.mark_video_watched(token)
+    assert not system.mark_verified(token)
+    assert system.confirm_surrender(token) is None
+    assert [e.event_type for e in system.events] == ["BREAK_COMPLETED"]
+
+
 def test_lock_invalidates_photo_and_never_reopens_camera(system):
     system.start(60)
     token = system.request_surrender()

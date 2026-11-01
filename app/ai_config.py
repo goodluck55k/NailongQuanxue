@@ -1,12 +1,14 @@
 """User-supplied vision API settings: validation, persistence and display text.
 
-The key is stored only in the local settings file, is never logged, and is never
-shown in full by the interface. Everything here is Qt-free so it can be tested
-without a GUI.
+The key is sealed with Windows DPAPI before it reaches the settings file, is
+never logged, and is never shown in full by the interface. Everything here is
+Qt-free so it can be tested without a GUI.
 """
 from dataclasses import dataclass, replace
 from datetime import datetime
 from urllib.parse import urlsplit
+
+from . import secure_credentials
 
 PROTOCOLS = {
     "openai": "OpenAI 兼容（/chat/completions）",
@@ -113,14 +115,25 @@ def read_settings(values):
         return value if isinstance(value, str) else ""
 
     protocol = raw.get("protocol")
+    sealed = text("api_key_sealed")
+    key = secure_credentials.unprotect(sealed) if sealed else text("api_key").strip()
     return AiSettings(
         protocol=protocol if protocol in PROTOCOLS else "openai",
         base_url=text("base_url").strip().rstrip("/"),
-        api_key=text("api_key").strip(),
+        api_key=key,
         model=text("model").strip(),
         verified=raw.get("verified") is True,
         verified_at=text("verified_at"),
     )
+
+
+def legacy_key_present(values):
+    """True when the settings file still holds an unsealed key from an older build."""
+    raw = values.get("ai") if isinstance(values, dict) else None
+    if not isinstance(raw, dict):
+        return False
+    plain = raw.get("api_key")
+    return isinstance(plain, str) and bool(plain.strip()) and not secure_credentials.is_sealed(raw.get("api_key_sealed"))
 
 
 def validate(settings):
@@ -134,8 +147,14 @@ def validate(settings):
 
 
 def payload(settings):
+    """Settings written to disk: the key is DPAPI-sealed, never plain."""
+    sealed = secure_credentials.protect(settings.api_key)
+    if sealed:
+        key_fields = {"api_key": "", "api_key_sealed": sealed}
+    else:
+        key_fields = {"api_key": settings.api_key, "api_key_sealed": ""}
     return {"protocol": settings.protocol, "base_url": settings.base_url,
-            "api_key": settings.api_key, "model": settings.model,
+            **key_fields, "model": settings.model,
             "verified": bool(settings.verified), "verified_at": settings.verified_at}
 
 
@@ -155,5 +174,19 @@ def mark_verified(store, settings):
 
 
 def clear_settings(store):
-    store.save(ai={"protocol": "openai", "base_url": "", "api_key": "", "model": "",
-                   "verified": False, "verified_at": ""})
+    store.save(ai={"protocol": "openai", "base_url": "", "api_key": "", "api_key_sealed": "",
+                   "model": "", "verified": False, "verified_at": ""})
+
+
+def migrate_plain_key(store):
+    """Re-seal a key written by an older build (plain text in settings.json)."""
+    if not legacy_key_present(store.values):
+        return False
+    try:
+        settings = read_settings(store.values)
+    except Exception:
+        return False
+    if not settings.api_key:
+        return False
+    save_settings(store, settings, verified=settings.verified)
+    return True

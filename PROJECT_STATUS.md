@@ -15,16 +15,25 @@
 ## 清理与保留
 
 - 删除 `app/camera_capture.py`（V2 不再静态拍照，已无引用）；删除 `tools/v11_smoke.py`（由 `tools/v2_smoke.py` 取代）。
-- 声音/笑声实验代码（`p1_experiments/` 15 个文件）整体隔离到 `build/quarantine/p1-audio-experiments/`，不再参与测试与构建；P1 报告归档到 `docs/archive/`。含用户真实音视频的 `build/p1-*` 目录**只登记、未删除**，清单见 `build/quarantine/MANIFEST.md`。
+- 声音/笑声实验代码（`p1_experiments/` 15 个文件及缓存）已核实无引用后删除，逐文件 SHA-256 见 `build/v2-cleanup/cleanup-manifest.json`；P1 报告归档到 `docs/archive/`。含用户真实音视频的 `build/p1-*` 目录**只登记、未删除**，待单独授权。
 - 保留：V1.1 全部照片与档案、计时与五分钟强制休息、内置奶龙视频与素材、紧急退出、V1.1 数据库迁移兼容、`build/backup-v1.1/` 回退备份。
 
 ## 验证状态（诚实版）
 
-- 自动化：`pytest -q` → **200 passed, 1 skipped**（跳过项是"私有图片不存在时跳过"的既有约定）。覆盖视觉协议构造与错误分类、判定三态、抽帧与运动量、录像归档配额、四阶段状态机、四页投降对话框、未配置/配置后的主界面行为、档案 schema 迁移、旧版兼容。
+- 自动化：`pytest -q` → **211 passed, 1 skipped**（跳过项是"私有图片不存在时跳过"的既有约定）。覆盖视觉协议构造与错误分类、判定三态、抽帧与运动量、录像归档配额、四阶段状态机、四页投降对话框、未配置/配置后的主界面行为、档案 schema 迁移、旧版兼容。
 - **未验证**：真实摄像头的录制质量与 MP4 可播放性（开发机 `QMediaDevices.videoInputs()` 为空）；真实视觉 API 的正反例识别（无授权 Key，只有模拟响应）；打包 EXE 的端到端动作挑战（无摄像头）。
 - 因此 V2.0 **达到"代码与自动化测试完成、可本地试跑"的程度**，真实正反例验收仍需在有摄像头、有可用视觉 API 的机器上按 `MANUAL_TESTS.md` 第 5–10 条执行。
 
 ## 边界
 
 - 无开机自启、无后台服务、不拦截系统操作、不主动断网；模型只收到抽出的 10 张静止画面。
-- API Key 只存本机 `settings.json`，不写日志、档案或构建产物。
+- API Key 用 Windows DPAPI 加密后存本机 `settings.json`（旧明文 Key 启动时自动重新封装），不写日志、档案或构建产物。
+- 临时录像写在 `%TEMP%\NailongQuanxue\clips\`，取消/重试/锁屏/休息结束即删，启动时清理本应用遗留超过 24 小时的片段。
+
+## 第二轮审核（2026-11-01）
+
+- 修复：`confirm_surrender()` 先释放对话框再复制录像，导致真实后端下归档必然 `save_failed`；现改为先归档后释放，并有回归用例。
+- 修复：取消投降后临时录像残留；`cleanup()` 现在显式删除，另加启动清理。
+- 加固：API Key 由明文改为 Windows DPAPI 密封存储。
+- 清理：旧音频/笑声实验 28 个文件（脚本 + 缓存）经零引用核实后删除，清单 `build/v2-cleanup/cleanup-manifest.json`。
+- 真实结果：`pytest -q` 211 passed / 1 skipped；`v2_smoke.py` PASS 26.281 s；`v2_smoke.py --full-break` PASS 315.141 s（真实休息 300.063 s）；`exe_smoke.py` PASS 18.141 s；源码审计 260 项 PASS；bundle 748 项、ZIP 749 项 PASS。

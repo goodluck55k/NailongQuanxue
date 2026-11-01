@@ -24,7 +24,7 @@
 - 旧照片目录 `photos\` 与 V1.1 配额（100 MiB）继续有效；新增 `videos\`（512 MiB）。
 - 迁移只做加法，不清空历史、不恢复运行态；迁移失败时保留原库并给出提示。
 
-声音路线（V1.1 期间的 P1 实验）在 V2.0 被彻底放弃：不录麦克风、不提取 WAV、不做笑声判定。相关代码隔离在 `build/quarantine/p1-audio-experiments/`，报告归档在 `docs/archive/`。
+声音路线（V1.1 期间的 P1 实验）在 V2.0 被彻底放弃：不录麦克风、不提取 WAV、不做笑声判定。相关代码已删除（清单见 `build/v2-cleanup/cleanup-manifest.json`），报告归档在 `docs/archive/`。
 
 ## V1 → V1.1
 

@@ -102,6 +102,16 @@ class FakeRecorder(QObject):
             self.path = None
 
 
+class ReleasingRecorder(FakeRecorder):
+    """Same behaviour as the real recorder: releasing the device drops the clip."""
+
+    def stop(self):
+        super().stop()
+        if self.path is not None:
+            Path(self.path).unlink(missing_ok=True)
+            self.path = None
+
+
 class FakeVerifier:
     answer = None
     error = None
@@ -258,10 +268,27 @@ def test_verified_challenge_saves_clip_and_ends_supervision(window, tmp_path):
     assert not Path(clip).exists(), "the temporary clip is removed after archiving"
 
 
+def test_clip_is_archived_before_the_recorder_releases_it(window, tmp_path):
+    """The real recorder deletes its temp clip on teardown; archiving must win."""
+    window.camera_factory = ReleasingRecorder
+    window.start_timer(90)
+    dialog = verified_passed(window)
+    QTest.mouseClick(dialog.confirm_button, Qt.MouseButton.LeftButton)
+    record = window.records.all()[0]
+    assert record["video_status"] == "saved"
+    saved = Path(record["video_path"])
+    assert saved.is_file() and saved.stat().st_size > 0
+    assert not list(tmp_path.rglob("fake-clip-*.mp4"))
+
+
 def test_confirmation_is_recorded_once(window):
     window.config.save(mode="automatic")
     window.start_timer(90)
     dialog = verified_passed(window)
+    # A pass alone changes nothing: the user still has to confirm.
+    assert window.controller.phase == Phase.RUNNING
+    assert window.surrender is dialog
+    assert window.records.all() == []
     token = dialog.token
     QTest.mouseClick(dialog.confirm_button, Qt.MouseButton.LeftButton)
     assert len(window.records.all()) == 1
@@ -381,6 +408,7 @@ def test_cancel_after_recording_saves_nothing(window):
     window.start_timer(90)
     dialog = verified_passed(window)
     clip = Path(dialog.clip_path)
+    assert clip.is_file()
     cancel = next(button for button in dialog.findChildren(QPushButton)
                   if button.text() == "继续坚持 / 取消")
     QTest.mouseClick(cancel, Qt.MouseButton.LeftButton)
@@ -390,6 +418,7 @@ def test_cancel_after_recording_saves_nothing(window):
     videos = window.config.root / "videos"
     assert not videos.exists() or not list(videos.glob("*.mp4"))
     assert not list(window.config.root.rglob("*.mp4"))
+    assert not clip.exists()  # the temporary clip of a cancelled attempt is removed
 
 
 def test_usage_deadline_invalidates_the_workflow(window, clock):

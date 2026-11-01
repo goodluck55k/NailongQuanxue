@@ -31,6 +31,7 @@ app/records_view.py
 app/reminder_window.py
 app/resources.py
 app/screen_manager.py
+app/secure_credentials.py
 app/settings_dialog.py
 app/supervision.py
 app/surrender_dialog.py
@@ -237,8 +238,10 @@ tests/conftest.py
 tests/test_action_verdict.py
 tests/test_ai_config.py
 tests/test_assets.py
+tests/test_camera_recorder.py
 tests/test_frame_sampler.py
 tests/test_public_audit.py
+tests/test_secure_credentials.py
 tests/test_storage.py
 tests/test_supervision.py
 tests/test_timer.py

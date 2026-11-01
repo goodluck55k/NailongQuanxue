@@ -6,6 +6,7 @@ archive only after the user confirms a verified challenge, and it is deleted
 when the dialog closes.
 """
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -27,6 +28,28 @@ def clip_directory():
     folder = Path(tempfile.gettempdir()) / "NailongQuanxue" / "clips"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+STALE_CLIP_SECONDS = 24 * 3600
+
+
+def cleanup_stale_clips(max_age_seconds=STALE_CLIP_SECONDS, now=None):
+    """Delete clips this app abandoned in an earlier crash.
+
+    Only files this module created (``clip-<hex>.mp4``) inside the app's own
+    temporary directory are touched, so unrelated user files stay safe.
+    """
+    folder = clip_directory()
+    cutoff = (time.time() if now is None else now) - max_age_seconds
+    removed = 0
+    for path in folder.glob("clip-*.mp4"):
+        try:
+            if path.is_file() and not path.is_symlink() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 class CameraRecorder(QObject):
