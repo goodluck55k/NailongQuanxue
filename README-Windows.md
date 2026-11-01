@@ -14,6 +14,6 @@
 
 动作核验时，从录像里均匀抽取的 10 张画面会发送到**你自己填写的** Base URL；除此之外不上传任何内容。API Key 只写在本机 `settings.json`，不进入日志、档案或构建产物。
 
-自动化测试结果与未覆盖的场景见 TEST_REPORT.md 和 MANUAL_TESTS.md。适用目标为 Windows 10/11 x64，各设备、相机、显示器和电源场景请按清单复测。开发机上没有摄像头，也没有真实视觉 API 授权，这两条路径只做了模拟测试。
+自动化测试结果与未覆盖的场景见 TEST_REPORT.md 和 MANUAL_TESTS.md。适用目标为 Windows 10/11 x64，各设备、相机、显示器和电源场景请按清单复测。摄像头与无声录像已在本机实测通过（`tools\camera_check.ps1`，详见 `docs/P1-摄像头与录像验证报告.md`）；真实视觉 API 仍未授权，动作识别这条路径目前只做了模拟测试。
 
 自有代码为 MIT License，Copyright (c) 2026 goodluck55k。内置视频、备用图片及参考图为用户提供的第三方素材，不自动适用 MIT。保留原内容，来源与指纹见 ASSET_MANIFEST.md（源码中为 assets/ASSET_MANIFEST.md）；依赖许可见 THIRD_PARTY_NOTICES.md 和 licenses。

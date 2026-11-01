@@ -39,3 +39,32 @@ def test_clip_directory_lives_under_the_app_temp_folder(monkeypatch, tmp_path):
     folder = use_temp_dir(monkeypatch, tmp_path)
     assert folder == Path(tmp_path) / "NailongQuanxue" / "clips"
     assert folder.is_dir()
+
+
+def test_discard_retries_while_the_encoder_still_holds_the_file(monkeypatch, tmp_path):
+    folder = use_temp_dir(monkeypatch, tmp_path)
+    clip = folder / "clip-locked01.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    handle = clip.open("rb")
+    try:
+        assert camera_recorder._discard(clip) is False
+        assert clip.exists()
+        assert str(clip) in camera_recorder._PENDING_DELETES
+    finally:
+        handle.close()
+
+    camera_recorder._retry_pending_deletes()
+
+    assert not clip.exists()
+    assert str(clip) not in camera_recorder._PENDING_DELETES
+
+
+def test_discard_deletes_a_free_file_immediately(monkeypatch, tmp_path):
+    folder = use_temp_dir(monkeypatch, tmp_path)
+    clip = folder / "clip-free0001.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    assert camera_recorder._discard(clip) is True
+    assert not clip.exists()
+    assert (str(clip)) not in camera_recorder._PENDING_DELETES

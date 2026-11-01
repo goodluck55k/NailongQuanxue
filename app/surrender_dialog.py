@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QProgres
 
 from .action_verdict import check_evidence, decide, failure, prompt_for
 from .async_task import run_async
-from .camera_recorder import DEFAULT_CLIP_MS, CameraRecorder
+from .camera_recorder import DEFAULT_CLIP_MS, CameraRecorder, _discard
 from .frame_sampler import FrameSampler
 from .supervision import DECLARATION
 from .theme import STYLE
@@ -422,10 +422,7 @@ class SurrenderDialog(QDialog):
             self.recorder = None
         # A clip that was never confirmed must not linger in the temp folder.
         if self.clip_path:
-            try:
-                Path(self.clip_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+            _discard(self.clip_path)
             self.clip_path = None
         self.declaration.clear()
         self.preview.show_image(QImage())

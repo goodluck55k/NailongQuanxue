@@ -12,7 +12,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-# 211 passed, 1 skipped in 8.35s
+# 213 passed, 1 skipped in 9.64s
 ```
 
 跳过项是既有约定：`tests/test_assets.py:41` 私有图片不在公开源码中时跳过。
@@ -32,7 +32,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 | `tests/test_frame_sampler.py` | 6 | 采样节流与缩放、容量上限、等距取帧含首尾、运动量估计、JPEG 编码 |
 | `tests/test_assets.py` | 5 | 固定素材存在性与指纹 |
 | `tests/test_v11_resources.py` | 4 | 资源解析只允许文件名、防止路径穿越 |
-| `tests/test_camera_recorder.py` | 3 | 过期临时片段清理只删本应用命名、目录缺失不报错、临时目录位置 |
+| `tests/test_camera_recorder.py` | 5 | 过期临时片段清理只删本应用命名、目录缺失不报错、临时目录位置、**编码器占用时延迟删除并重试**、自由文件立即删除 |
 
 判定逻辑的关键回归（对应"静态摆拍不能误判为两组动作"）：
 
@@ -70,7 +70,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 
 ```powershell
 .\.venv\Scripts\python.exe tools\v2_smoke.py
-# result: PASS, 26.281 s
+# result: PASS, 26.296 s
 ```
 
 检查项（全部通过）：
@@ -93,10 +93,23 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 
 ```powershell
 .\.venv\Scripts\python.exe tools\exe_smoke.py 'dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe' --report build\exe-smoke-round2.json
-# result: PASS, 18.141 s
+# result: PASS, 18.0 s
 ```
 
 检查项：首次 AI 提醒出现并可关闭 → EXE 从其他工作目录启动并最小化 → 最小化状态下最后十秒提醒仍出现 → 归零后遮挡窗出现 → 覆盖窗「解除限制」打开投降书 → 投降书底部取消后休息继续、无残留窗口。**未在 EXE 上跑通完整动作挑战**（本机无摄像头）；测试结束时由工具终止其自身启动的进程，不记为"软件正常退出"。
+
+## 摄像头与无声录像（真机实测）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\camera_check.ps1
+# 结果：7/7 通过（枚举、启动、预览、无声录像、取消清理、重新录制、释放）
+```
+
+复用正式实现 `app/camera_recorder.py` 的自检工具实测：枚举到 `ASUS FHD webcam` 与 `AvStream Media Device`（IR）；预览 1.2 秒内 9 帧；录像 8.0–9.2 MB、采样 26 帧、跨度 6.69–6.75 秒；`ffmpeg` 探针显示唯一流为 `Video: h264 (Constrained Baseline) 1920x1080 29.63 fps`，**没有音频流**；取消后无残留临时文件；可连续重录；停止后可立刻重新激活设备。
+
+过程中发现并修复：取消录制时编码器仍占用文件导致 `unlink()` 失败、临时 mp4 残留 —— 改为 `_discard()` 延迟重试（250 ms）并在 `_teardown()` 前先 `recorder.stop()`。
+
+本机限制（重要）：Windows 按"可执行文件路径"单独授权摄像头，未获授权的 python.exe/EXE 会被静默拒绝（`E_ACCESSDENIED`），Qt 因此枚举为 0。用户需在 设置 → 隐私和安全性 → 摄像头 里为本程序授权一次。详见 `docs/P1-摄像头与录像验证报告.md`。
 
 ## 构建产物
 
@@ -105,14 +118,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
 # exit=0
 ```
 
-- 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 421 个文件，114,962,789 B）
-- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,237,232 B
-- SHA-256：`5a1e4564ecfa330f6bcfff3c0cd4c94c467bdcac9c36e585d397981e1ba6a3c0`
+- 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 421 个文件，114,964,316 B）
+- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,237,831 B
+- SHA-256：随产物生成，见 `dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip.sha256`（本机构建记录：`build\build-round3b.log`）
 - 审计：bundle 748 项 PASS、ZIP 749 项 PASS；包内只有 `assets/default_break.mp4` 与 `assets/fallback_overlay.jpg` 两个固定素材，**没有** `settings.json`、`.sqlite3`、日志或个人媒体。
 
 ## 未验证（不得视为通过）
 
-1. **真实摄像头录制**：本机无摄像头，`camera_recorder` 只能靠测试替身验证状态机；MP4 可播放性、曝光、帧率、12 秒时长准确性未实测。
+1. **EXE 内的真实摄像头录制**：源码级实测已通过（见上节），但打包 EXE 的路径未获 Windows 摄像头授权，EXE 内录像仍需用户授权后补测；曝光、画质与 12 秒时长的多机型表现未测。
 2. **真实视觉 API 的正反例识别**：无授权 Key，只验证了请求构造、响应解析与错误分类。模型能否稳定区分"两组前倾回正"与"摆拍不动"必须在目标模型上实测，并按结果调整 `MIN_MOTION` 与提示词。
 3. **EXE 端到端动作挑战**：需要摄像头与 API 才能跑。
 4. 多屏热插拔、DPI 150%、锁屏与睡眠在**录制过程中**的真实行为（自动化用替身覆盖了逻辑分支，真机未测）。

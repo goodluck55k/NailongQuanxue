@@ -33,6 +33,54 @@ def clip_directory():
 STALE_CLIP_SECONDS = 24 * 3600
 
 
+_PENDING_DELETES = []
+_RETRY_TIMER = None
+
+
+def _retry_pending_deletes():
+    global _RETRY_TIMER
+    for path in list(_PENDING_DELETES):
+        try:
+            Path(path).unlink(missing_ok=True)
+            _PENDING_DELETES.remove(path)
+        except OSError:
+            continue
+    if not _PENDING_DELETES and _RETRY_TIMER is not None:
+        _RETRY_TIMER.stop()
+
+
+def _retry_timer():
+    global _RETRY_TIMER
+    if _RETRY_TIMER is None:
+        from PySide6.QtCore import QCoreApplication
+        if QCoreApplication.instance() is None:
+            return None
+        _RETRY_TIMER = QTimer()
+        _RETRY_TIMER.setInterval(250)
+        _RETRY_TIMER.timeout.connect(_retry_pending_deletes)
+    return _RETRY_TIMER
+
+
+def _discard(path):
+    """Delete a clip, retrying while the muxer still holds the file open.
+
+    The encoder closes the file a moment after ``QMediaRecorder.stop()``, so a
+    single ``unlink()`` can hit a sharing violation on Windows.
+    """
+    try:
+        Path(path).unlink(missing_ok=True)
+        return True
+    except OSError:
+        pass
+    key = str(path)
+    if key not in _PENDING_DELETES:
+        _PENDING_DELETES.append(key)
+    timer = _retry_timer()
+    if timer is not None and not timer.isActive():
+        timer.start()
+    return False
+
+
 def cleanup_stale_clips(max_age_seconds=STALE_CLIP_SECONDS, now=None):
     """Delete clips this app abandoned in an earlier crash.
 
@@ -84,7 +132,9 @@ class CameraRecorder(QObject):
             return
         devices = QMediaDevices.videoInputs()
         if not devices:
-            self.failed.emit("没有可用摄像头。请连接摄像头后重试，或取消返回。")
+            self.failed.emit(
+                "没有可用摄像头。请连接摄像头，并在 Windows 设置 → 隐私和安全性 → 摄像头 里"
+                "允许本程序访问摄像头后重试，或取消返回。")
             return
         try:
             self.path = clip_directory() / f"clip-{uuid.uuid4().hex}.mp4"
@@ -224,13 +274,19 @@ class CameraRecorder(QObject):
         self.watchdog.stop()
         self._teardown(keep_file=False)
 
+    def release(self):
+        """Release the camera but keep a finished clip on disk."""
+        self.active = False
+        self.recording = False
+        self.stopping = False
+        self.ticker.stop()
+        self.watchdog.stop()
+        self._teardown(keep_file=True)
+
     def cleanup_file(self):
         if self.path is None:
             return
-        try:
-            Path(self.path).unlink(missing_ok=True)
-        except OSError:
-            pass
+        _discard(self.path)
         self.path = None
 
     def _teardown(self, keep_file):
@@ -240,6 +296,11 @@ class CameraRecorder(QObject):
                 self.recorder.recorderStateChanged.disconnect(self._state)
             except (RuntimeError, TypeError):
                 pass
+            if self.recorder.recorderState() == QMediaRecorder.RecorderState.RecordingState:
+                try:
+                    self.recorder.stop()
+                except RuntimeError:
+                    pass
         if self.camera is not None:
             try:
                 self.camera.stop()
@@ -267,8 +328,5 @@ class CameraRecorder(QObject):
                 item.deleteLater()
         self.camera = self.recorder = self.sink = self.session = None
         if not keep_file and path is not None:
-            try:
-                Path(path).unlink(missing_ok=True)
-            except OSError:
-                pass
+            _discard(path)
         self.path = path if keep_file else None

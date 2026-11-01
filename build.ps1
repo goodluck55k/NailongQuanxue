@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$SkipTests, [string]$Python = '')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

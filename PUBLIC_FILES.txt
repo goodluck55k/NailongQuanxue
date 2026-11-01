@@ -250,6 +250,8 @@ tests/test_video_archive.py
 tests/test_vision_api.py
 tests/test_windows.py
 tools/__init__.py
+tools/camera_check.ps1
+tools/camera_check.py
 tools/exe_smoke.py
 tools/gui_smoke.py
 tools/prepare_sources.py
