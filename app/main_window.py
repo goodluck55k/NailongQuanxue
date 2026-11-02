@@ -102,6 +102,29 @@ class MainWindow(QMainWindow):
         self.ai_status = QLabel()
         self.ai_status.setObjectName("muted")
         layout.addWidget(self.ai_status)
+        # 数据目录有问题时用内联横幅提示：绝不在启动时弹模态框，
+        # 否则主窗口会被禁用，看起来就像整个界面卡死。
+        self.data_banner = QFrame()
+        self.data_banner.setObjectName("dataBanner")
+        banner_layout = QVBoxLayout(self.data_banner)
+        banner_layout.setContentsMargins(16, 12, 16, 12)
+        self.banner_text = QLabel()
+        self.banner_text.setWordWrap(True)
+        banner_layout.addWidget(self.banner_text)
+        banner_buttons = QHBoxLayout()
+        self.banner_move_button = QPushButton("选择新的数据目录")
+        self.banner_move_button.clicked.connect(self.choose_data_directory)
+        self.banner_open_button = QPushButton("打开数据目录")
+        self.banner_open_button.clicked.connect(lambda: self._open_folder(self.config.root))
+        self.banner_hide_button = QPushButton("关闭提示")
+        self.banner_hide_button.clicked.connect(self.data_banner.hide)
+        for button in (self.banner_move_button, self.banner_open_button, self.banner_hide_button):
+            button.setObjectName("secondaryButton")
+            banner_buttons.addWidget(button)
+        banner_buttons.addStretch()
+        banner_layout.addLayout(banner_buttons)
+        self.data_banner.hide()
+        layout.addWidget(self.data_banner)
         card = QFrame()
         card.setObjectName("mainCard")
         shadow = QGraphicsDropShadowEffect(card)
@@ -195,28 +218,24 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.warn_if_data_unwritable)
 
     def warn_if_data_unwritable(self):
-        """数据目录不可写时先说清楚，否则用户会在保存配置时才撞上 errno 13。"""
-        if self._closing or self.data_writable:
+        """数据目录不可写时用内联横幅说明；不弹模态框，主窗口保持可操作。"""
+        if not isValid(self) or self._closing:
             return
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("奶龙劝学 — 数据目录无法写入")
-        box.setText("这个文件夹无法写入，设置、照片、录像和档案都存不下来。")
-        box.setInformativeText(
-            self.data_write_reason + "\n\n"
-            "数据目录：" + str(self.config.root) + "\n\n"
-            "可以点“选择新的数据目录”把它换到一个能写的位置（例如 D:\\NailongData），"
-            "程序会把现有设置与档案复制过去；也可以把本程序加入安全软件的信任列表"
-            "（例如腾讯电脑管家、迈克菲的“文件夹保护/勒索防护”）后重试。")
-        move_button = box.addButton("选择新的数据目录", QMessageBox.ButtonRole.ActionRole)
-        open_button = box.addButton("打开数据目录", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("稍后再说", QMessageBox.ButtonRole.AcceptRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is move_button:
-            self.choose_data_directory()
-        elif clicked is open_button:
-            self._open_folder(self.config.root)
+        try:
+            if self.data_writable:
+                self.data_banner.hide()
+                return
+        except RuntimeError:  # 窗口已经被销毁（例如测试里 deleteLater 之后）
+            return
+        try:
+            self.banner_text.setText(
+                "数据目录无法写入：" + str(self.config.root) + "\n"
+                + self.data_write_reason + "\n"
+                "设置、照片、录像和档案都可能存不下来。可以把数据目录换到别处"
+                "（例如 D:\\NailongData，程序会复制现有数据），或把本程序加入安全软件的信任列表。")
+            self.data_banner.show()
+        except RuntimeError:
+            pass
 
     def choose_data_directory(self):
         """默认数据目录写不进去时，让用户换一个可写目录（记录在 HKCU，不动原文件）。"""
@@ -238,11 +257,11 @@ class MainWindow(QMainWindow):
         detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
         if errors:
             detail += "\n未能复制：" + "\n".join(errors[:3])
-        QMessageBox.information(
-            self, "数据目录已更改",
-            "新的数据目录：\n" + str(target) + "\n\n" + detail +
-            "\n\n原目录里的文件不会被删除。请重启程序后继续使用。")
-        self.quit_requested.emit()
+        self.banner_text.setText(
+            "已把数据目录改为：" + str(target) + "\n" + detail +
+            "\n原目录里的文件不会被删除。重启程序后生效。")
+        self.data_banner.show()
+        self.banner_move_button.setEnabled(False)
 
     @staticmethod
     def _open_folder(folder):
@@ -267,7 +286,7 @@ class MainWindow(QMainWindow):
             self.surrender.update_ai_note(self.ai_settings.status_text())
 
     def maybe_prompt_ai(self):
-        if self._closing or not self.ai_prompt_pending:
+        if not isValid(self) or self._closing or not self.ai_prompt_pending:
             return
         self.ai_prompt_pending = False
         if not self.ai_settings.configured:

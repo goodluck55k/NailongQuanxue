@@ -82,6 +82,7 @@ class SurrenderDialog(QDialog):
         self.verifying = False
         self.submitting = False
         self.cleaned = False
+        self.verify_generation = 0
         self._watchdog = QTimer(self)
         self._watchdog.setSingleShot(True)
         self._watchdog.setInterval(VERIFY_WATCHDOG_MS)
@@ -356,6 +357,8 @@ class SurrenderDialog(QDialog):
             return
         motion = FrameSampler().motion_trace(images)
         prompt = prompt_for(len(encoded), span_ms / 1000)
+        self.verify_generation += 1
+        generation = self.verify_generation
         self.verifying = True
         self.result_title.setText("正在核验动作…")
         self.result_detail.setText("已抽取 %d 张画面交给所配置的视觉模型判断，请稍候。" % len(encoded))
@@ -363,10 +366,11 @@ class SurrenderDialog(QDialog):
         self._watchdog.start()
         verifier = self.verifier or LiveVerifier(None)
         run_async(lambda: verifier.evaluate(prompt, encoded),
-                  lambda answer, error: self._verified(answer, error, motion))
+                  lambda answer, error: self._verified(answer, error, motion, generation))
 
-    def _verified(self, answer, error, motion):
-        if self.cleaned:
+    def _verified(self, answer, error, motion, generation):
+        # 重试或关闭后到达的旧结果直接丢弃，避免影响下一轮挑战。
+        if self.cleaned or generation != self.verify_generation:
             return
         self._watchdog.stop()
         self.verifying = False
@@ -407,6 +411,10 @@ class SurrenderDialog(QDialog):
     def retry(self):
         if self.cleaned:
             return
+        # 让还在路上的上一次核验结果失效。
+        self.verify_generation += 1
+        self.verifying = False
+        self._watchdog.stop()
         self.controller.retake(self.token)
         if self.recorder is not None:
             self.recorder.cleanup_file()

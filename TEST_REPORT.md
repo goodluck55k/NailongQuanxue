@@ -212,3 +212,46 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
   - 把 `tempfile.gettempdir` 替换成直接抛 `FileNotFoundError`：同样不崩溃。
   - 旧版临时目录指针仍被正确读取（兼容）。
   - `pytest tests/test_config_paths.py tests/test_storage.py tests/test_self_check.py tests/test_windows.py -q` → 86 passed。
+## 2.0.1 追加：UI 卡死排查与修复
+
+### 现象与证据
+
+用窗口探针（`build/ui_probe.py`，枚举顶层窗口 + WM_NULL 往返）对比两种数据目录状态：
+
+| 数据目录 | 启动后主窗口 `enabled` | 模态窗口 | 额外窗口 |
+|---|---|---|---|
+| 不可写（用户现场） | **false（点击无响应）** | `#32770` 对话框 | `奶龙劝学 — 数据目录无法写入` + `配置视觉 AI` |
+| 可写 | true | 无 | 只有 AI 提醒 |
+
+`WM_CLOSE` 打在模态框上也不会关闭它（Qt 的 QMessageBox 没有默认按钮处理关闭），
+主窗口和 AI 窗口都被 `enabled=false` 挡住，看起来就是"整个界面卡死"。
+
+### 根因
+
+上一版（2.0.1 第一轮）在 `MainWindow.__init__` 里用
+`QTimer.singleShot(0, self.warn_if_data_unwritable)` 弹出一个 `QMessageBox.exec()`。
+`exec()` 会进入嵌套事件循环并把**其他所有窗口**设为不可用；用户的默认数据目录不可写
+（此前的 `未保存：13` 即由此而来），所以每次启动都会命中这条路径。
+两个单发定时器（AI 提醒 + 数据目录提醒）还会叠加成两层窗口。
+
+### 修复
+
+1. 启动路径上不再有任何 `exec()` 模态框：数据目录问题改为主界面内的
+   **内联横幅**（`QFrame#dataBanner`），带「选择新的数据目录 / 打开数据目录 / 关闭提示」，
+   主窗口始终保持 `enabled`。
+2. 启动回调增加 `isValid()` 与 `RuntimeError` 保护，窗口销毁后到达的定时器不会抛异常
+   （测试 teardown 曾经因此报错）。
+3. 迁移数据目录后不再立即退出程序，而是更新横幅提示"重启后生效"。
+4. 新增 `app/diagnostics.py`：
+   - `faulthandler` 把崩溃栈写进 `<数据目录>\logs\crash.log`；
+   - 看门狗线程监听主线程心跳（QTimer 250 ms），超过 5 秒没跳动就 dump 所有线程的 Python 栈；
+   - 主窗口构建耗时、界面显示耗时写入 `screenbreak.log`。
+5. 投降核验增加代次（generation）：重试/取消后到达的旧结果直接丢弃，不会污染下一轮。
+
+### 验证
+
+- 完整 `pytest -q`：**241 passed, 1 skipped**。
+- 真实窗口响应性（`tools/ui_responsiveness.py`，windows 平台插件 + QTest 点击）：
+  18 项全过，交互阶段事件循环最大停顿 **83.8 ms**（首帧绘制约 1.7 s，属启动成本）。
+- 打包 EXE 启动探针（不可写目录）：无模态窗口，主窗口 `enabled=true`。
+- `tools/exe_smoke.py`：PASS（17.1 s）。

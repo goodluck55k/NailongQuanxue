@@ -6,7 +6,10 @@ from app import camera_recorder
 
 
 def use_temp_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(camera_recorder.tempfile, "gettempdir", lambda: str(tmp_path))
+    """不再依赖 tempfile：直接指定 TEMP/TMP，验证片段目录落在临时目录下。"""
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    monkeypatch.setenv("TMP", str(tmp_path))
+    monkeypatch.setenv("NAILONG_DATA_DIR", str(tmp_path / "data"))
     return camera_recorder.clip_directory()
 
 

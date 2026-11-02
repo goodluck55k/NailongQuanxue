@@ -2,6 +2,8 @@ STYLE = """
 QWidget {font-family:'Microsoft YaHei UI'; font-size:14px; color:#40301C;}
 QMainWindow, QDialog {background:#FFF9EA;}
 QFrame#mainCard, QFrame#inputCard {background:white; border:1px solid #F1E5CA; border-radius:20px;}
+QFrame#dataBanner {background:#FFF4E2; border:1px solid #E8A64C; border-radius:14px;}
+QFrame#dataBanner QLabel {color:#8A5A16;}
 QPushButton {background:#FFCE54; border:1px solid #EABD4C; border-radius:12px; padding:10px 20px; font-weight:600;}
 QPushButton:hover {background:#FFD96E;}
 QPushButton:pressed {background:#EABD4C;}

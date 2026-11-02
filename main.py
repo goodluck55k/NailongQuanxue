@@ -18,10 +18,18 @@ def positive_seconds(value):
     return seconds
 
 
-def configure_logging():
+def log_folder():
+    """日志目录；拿不到就退回用户主目录，绝不因为日志而崩溃。"""
     try:
         from app.config_store import data_directory
-        folder = data_directory() / "logs"
+        return data_directory() / "logs"
+    except Exception:
+        return Path(os.path.expanduser("~")) / "NailongQuanxue-logs"
+
+
+def configure_logging():
+    try:
+        folder = log_folder()
         folder.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(folder / "screenbreak.log", maxBytes=256_000,
                                       backupCount=2, encoding="utf-8")
@@ -96,17 +104,29 @@ def main():
         except Exception as error:  # 自检失败也不能甩出 Traceback
             print("自检未能完成：%s: %s" % (type(error).__name__, error), file=sys.stderr)
             return 2
+    import time
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QMessageBox
+    from app.diagnostics import Watchdog, install_faulthandler
     from app.main_window import MainWindow
     from app.windows_session_events import WindowsSessionEvents
 
+    started = time.monotonic()
+    log = logging.getLogger("NailongQuanxue")
     configure_logging()
     app = QApplication(sys.argv[:1])
     app.setApplicationName("奶龙劝学")
     app.setApplicationVersion(APP_VERSION)
     app.setQuitOnLastWindowClosed(False)
-    window = MainWindow()
+
+    try:
+        window = MainWindow()
+    except Exception as error:  # 启动失败也要给中文提示，不能只甩 Traceback
+        log.exception("Startup failed")
+        QMessageBox.critical(None, "奶龙劝学",
+                             "启动失败：%s\n\n本地日志：%s" % (error, log_folder()))
+        return 1
+    log.info("主窗口构建完成，用时 %.0f ms", (time.monotonic() - started) * 1000)
 
     session_events = WindowsSessionEvents(app, window)
     window.quit_requested.connect(app.quit)
@@ -115,15 +135,26 @@ def main():
     app.aboutToQuit.connect(window.shutdown)
     app.aboutToQuit.connect(session_events.close)
 
+    # 卡死诊断：faulthandler 记录崩溃栈，看门狗在主线程停顿时导出所有线程栈。
+    stream = install_faulthandler(log_folder() / "crash.log")
+    watchdog = Watchdog(stream=stream)
+    watchdog.start()
+    heartbeat = QTimer()
+    heartbeat.setInterval(250)
+    heartbeat.timeout.connect(watchdog.beat)
+    heartbeat.start()
+    app.aboutToQuit.connect(watchdog.stop)
+
     def on_exception(kind, value, traceback):
         # Do not log locals, camera frames or the declaration text.
-        logging.getLogger("NailongQuanxue").critical("Unexpected application error: %s", kind.__name__)
+        log.critical("Unexpected application error: %s", kind.__name__, exc_info=(kind, value, traceback))
         window.shutdown()
         QMessageBox.critical(None, "奶龙劝学", "发生错误，本次监督已结束。请查看本地日志；不会自动恢复监督。")
         app.exit(1)
 
     sys.excepthook = on_exception
     window.show()
+    log.info("界面已显示，启动总耗时 %.0f ms", (time.monotonic() - started) * 1000)
     if args.test_seconds is not None:
         QTimer.singleShot(0, lambda: window.start_timer(args.test_seconds))
     return app.exec()
