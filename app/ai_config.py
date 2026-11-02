@@ -25,6 +25,10 @@ class AiConfigError(ValueError):
     """Unusable configuration text; the message is safe to show to the user."""
 
 
+class CredentialStorageError(AiConfigError):
+    """The key cannot be sealed, so it must not be written in plain text."""
+
+
 def clean_protocol(value):
     text = str(value or "").strip().lower()
     if text not in PROTOCOLS:
@@ -147,12 +151,25 @@ def validate(settings):
 
 
 def payload(settings):
-    """Settings written to disk: the key is DPAPI-sealed, never plain."""
-    sealed = secure_credentials.protect(settings.api_key)
-    if sealed:
+    """Settings written to disk: the key is DPAPI-sealed, never plain.
+
+    When the key cannot be sealed the caller must fail loudly instead of
+    quietly storing a readable secret: an explicit error keeps the old file
+    intact and tells the user why nothing was saved.
+    """
+    if settings.api_key:
+        if not secure_credentials.available():
+            raise CredentialStorageError(
+                "当前系统不支持 Windows 数据保护（DPAPI），为避免明文保存 API Key，本次没有写入配置。"
+                "原有配置保持不变。")
+        sealed = secure_credentials.protect(settings.api_key)
+        if not sealed:
+            raise CredentialStorageError(
+                "API Key 无法用 Windows 数据保护（DPAPI）加密，本次没有写入配置。"
+                "原有配置保持不变。")
         key_fields = {"api_key": "", "api_key_sealed": sealed}
     else:
-        key_fields = {"api_key": settings.api_key, "api_key_sealed": ""}
+        key_fields = {"api_key": "", "api_key_sealed": ""}
     return {"protocol": settings.protocol, "base_url": settings.base_url,
             **key_fields, "model": settings.model,
             "verified": bool(settings.verified), "verified_at": settings.verified_at}
@@ -188,5 +205,11 @@ def migrate_plain_key(store):
         return False
     if not settings.api_key:
         return False
-    save_settings(store, settings, verified=settings.verified)
+    if not secure_credentials.available():
+        # 无法加密时保留旧文件原样，读取仍然可用，绝不改写为其他形式。
+        return False
+    try:
+        save_settings(store, settings, verified=settings.verified)
+    except CredentialStorageError:
+        return False
     return True

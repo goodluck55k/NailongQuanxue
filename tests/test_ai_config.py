@@ -1,8 +1,10 @@
 import pytest
 
-from app.ai_config import (AiConfigError, AiSettings, PROTOCOLS, clean_base_url, clean_key,
-                           clean_model, clean_protocol, clear_settings, read_settings,
-                           save_settings, validate)
+from app import ai_config, secure_credentials
+from app.ai_config import (AiConfigError, AiSettings, CredentialStorageError, PROTOCOLS,
+                           clean_base_url, clean_key, clean_model, clean_protocol,
+                           clear_settings, migrate_plain_key, read_settings, save_settings,
+                           validate)
 from app.config_store import ConfigStore
 
 
@@ -81,3 +83,39 @@ def test_validate_keeps_verification_flag():
                                      verified_at="2026-11-01T10:00:00+08:00"))
     assert normalized.verified is True
     assert normalized.verified_at == "2026-11-01T10:00:00+08:00"
+
+def test_key_is_never_written_in_plain_text_when_dpapi_is_unavailable(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path)
+    save_settings(store, AiSettings(base_url="https://api.test", api_key="sk-old", model="m"))
+    before = (tmp_path / "settings.json").read_bytes()
+
+    monkeypatch.setattr(secure_credentials, "available", lambda: False)
+    with pytest.raises(CredentialStorageError) as error:
+        save_settings(store, AiSettings(base_url="https://api.test", api_key="sk-new", model="m2"))
+
+    assert "明文" in str(error.value) and "DPAPI" in str(error.value)
+    assert (tmp_path / "settings.json").read_bytes() == before
+    assert read_settings(ConfigStore(tmp_path).values).api_key == "sk-old"
+
+
+def test_sealing_failure_is_reported_instead_of_falling_back_to_plain_text(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path)
+    monkeypatch.setattr(secure_credentials, "available", lambda: True)
+    monkeypatch.setattr(secure_credentials, "protect", lambda text: "")
+
+    with pytest.raises(CredentialStorageError):
+        ai_config.payload(AiSettings(base_url="https://api.test", api_key="sk-secret", model="m"))
+    assert not (tmp_path / "settings.json").exists()
+
+
+def test_migration_leaves_a_plain_text_key_alone_when_it_cannot_seal(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path)
+    store.save(ai={"protocol": "openai", "base_url": "https://api.test", "api_key": "sk-legacy",
+                   "api_key_sealed": "", "model": "m", "verified": True, "verified_at": ""})
+    before = (tmp_path / "settings.json").read_bytes()
+
+    monkeypatch.setattr(secure_credentials, "available", lambda: False)
+
+    assert migrate_plain_key(store) is False
+    assert (tmp_path / "settings.json").read_bytes() == before
+    assert read_settings(ConfigStore(tmp_path).values).api_key == "sk-legacy"

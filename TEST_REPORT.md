@@ -1,18 +1,122 @@
-# 奶龙劝学 V2.0 测试与验收报告
+# 奶龙劝学 测试与验收报告
 
-日期：2026-11-01。分支 `main`，**未 push、未建分支、未发布 Release**。本报告只记录真实执行的命令与结果；未执行的项目一律标注"未验证"。
+本文件只记录**真实执行过的命令与结果**，未执行的项一律标注"未验证"。
 
-本文件在第二轮审核后更新：数值全部来自本轮重跑（第一轮记录见 git 提交 `8979e16` 时的版本）。
+分两部分：
+
+- 第一部分是本次 **2.0.1 Windows 发行验收**（最新结果，随发行包一起发布）；
+- 第二部分保留 V2.0 开发期的历史记录，其中的数字是当时的结果，没有改写，用于追溯。
+
+---
+
+## 一、2.0.1 发行验收（最新）
+
+环境：Windows 11 x64（NT 10.0 build 26200），Python 3.11.5（`.venv`），PySide6 6.8.3，PyInstaller 6.16.0，pytest 8.4.2；摄像头 2 个（`ASUS FHD webcam`、`ASUS IR camera`）。**没有真实视觉 API 授权**。
+
+### 1. 自动化测试
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+# 244 passed, 1 skipped in 12.14s
+```
+
+跳过项是既有约定：`tests/test_assets.py:41` 私有装饰图不在公开源码中时跳过。本次为发行新加的用例包括：DPAPI 不可用时拒绝明文保存 Key（3 项）、`main` 分支上的发行脚本与构建校验。
+
+### 2. 编译与依赖
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall -q app main.py tools tests   # OK
+.\.venv\Scripts\python.exe -m pip check                              # No broken requirements found.
+```
+
+### 3. 源码审计
+
+```powershell
+.\.venv\Scripts\python.exe tools\scan_public.py --sources . --allow-fixed-assets --report build\source-audit.json
+# {"result": "PASS", "checked_entries": 271, ...}
+```
+
+### 4. 发行包构建（`build.ps1 -Release`）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Release -SkipTests
+# Version: 2.0.1 ... RELEASE PACKAGE (ready for GitHub Release)
+```
+
+| 项目 | 结果 |
+|---|---|
+| ZIP | `dist\v2.0.1-release\NailongQuanxue-v2.0.1-Windows-x64.zip`，48,537,504 B |
+| SHA-256 | `e3df589545858c19ea94961c62ed1ed9ff9f2203e6c6027bd08ce24737aaccd1e`（写入同名 `.sha256`） |
+| 校验文件 | `NailongQuanxue-v2.0.1-Windows-x64.zip.sha256`（105 B，格式 `<hash>  <文件名>`） |
+| 包内结构 | 459 个条目；`NailongQuanxue.exe` 2,202,327 B；`_internal\` 237 个文件；`assets\default_break.mp4`、`assets\fallback_overlay.jpg` 位于 `_internal\assets\` |
+| 审计 | bundle 与 ZIP 均 PASS；包内没有 `settings.json`、`.sqlite3`、日志、照片、录像、`NailongData`，也没有本地专用提示文件 |
+
+ZIP 内容由 `tools/verify_bundle.py` 独立校验（`ok: true`）：必需文件齐全、单一顶层目录、无路径穿越、无个人数据、`_internal` 文件数达标、哈希与 `.sha256` 一致。
+
+### 5. 解压后的真实 EXE
+
+把发行 ZIP 解压到普通目录 `C:\NailongRelease-v2.0.1` 后直接运行：
+
+```powershell
+NailongQuanxue.exe --self-check
+# {"version":"2.0.1","frozen":true,"qt":"6.8.3","camera":{"state":"ok","names":["ASUS FHD webcam","AvStream Media Device"]}}
+
+NailongQuanxue.exe --ui-save-test
+# {"ok":true,"file_written":true,"sealed_in_file":true,"plaintext_key_in_file":false,"key_recovered":true,
+#  "data_directory":"C:\\Users\\ASUS\\AppData\\Local\\NailongQuanxue"}
+```
+
+- 配置保存：在真实界面里点击「保存配置」写盘成功，文件中是 `dpapi:` 密文，无明文 Key，重读后可解密。
+- 摄像头：解压到普通路径后 Windows 授权正常，`state=ok`，能枚举到两个设备。
+
+EXE 冒烟（`tools\exe_smoke.py`）在该解压目录上重跑：**PASS，17.1 s**。检查项：首次启动的 AI 配置提醒可关闭 → 最小化后倒计时 → 归零出现全屏休息遮挡 → 「解除限制」打开投降书 → 取消后休息继续、无残留窗口。
+
+### 6. 摄像头与无声录像（真机）
+
+```powershell
+C:\Python311\python.exe tools\camera_check.py --seconds 6     # 该解释器已获 Windows 摄像头授权
+# 7/7 通过
+```
+
+枚举 2 个摄像头 → 启动 → 收到 8 帧预览 → 录像 7,476,952 B（`ftyp` 头，22 帧，5.67 s）→ 取消后无残留 → 可重新录制 → 设备可再次打开。临时录像已清理，没有把个人画面留在仓库里。
+
+### 7. Win32 源码级冒烟
+
+```powershell
+.\.venv\Scripts\python.exe tools\v2_smoke.py
+# result: PASS, 26.281 s
+```
+
+覆盖：首次启动的 AI 提醒 → 最后十秒逐秒倒计时 → 真实解码内置视频 310 帧（720×1280，循环 2 次，无音频输出）→ 「解除限制」→ 投降书 → 摄像头不可用（本解释器未获授权）时如实提示且「确认投降」保持禁用 → 取消后休息继续 → 紧急退出两次。
+
+### 8. 未验证（不得视为通过）
+
+1. **真实视觉 API 的正反例识别**：没有可用授权 Key。请求构造、响应解析、错误分类、`sequence_verified` 校验由单元测试覆盖，但"模型能否稳定区分两组动作与静态摆拍"必须在目标模型上实测，并据此调整 `MIN_MOTION` 与提示词。
+2. **真人完整动作挑战（EXE 端到端）**：需要摄像头之外再配一个可用视觉 API，本次未执行。
+3. **300 秒真实休息的逐次人工观测**：逻辑由自动化测试覆盖；`--full-break` 的逐秒实测是 11-01 的历史结果，本次发行未重跑。
+4. 多屏热插拔、DPI 150%、录制过程中锁屏/睡眠等真机场景未测。
+
+以上对应 `MANUAL_TESTS.md` 与 `docs/人工验收清单.md` 的实机条目。
+
+### 9. 发布流程
+
+推送 `v2.0.1` 标签后，`.github/workflows/release.yml` 在 `windows-latest` 上重新执行：安装依赖 → 全量 pytest → `compileall` / `pip check` → 版本与标签一致性检查 → 源码审计 → `build.ps1 -Release` → ZIP 结构与 SHA-256 校验 → 创建 Release 并上传 ZIP 与 `.sha256`。任何一步失败都不会产生 Release；已存在的 Release 会被拒绝覆盖。Release 建成后会读回附件清单，缺附件则删除该 Release 并让工作流失败。
+
+---
+
+## 二、历史记录：V2.0 开发期（2026-11-01 – 11-02）
+
+下面保留开发期间的原始记录，数字为当时结果。
 
 ## 环境
 
-Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons 6.8.3，PyInstaller 6.16.0，pytest 8.4.2。一块显示器，Qt 逻辑几何 1707×1067，125% 缩放。**本机摄像头 0 个**（`QMediaDevices.videoInputs()` 为空），音频输入 1 个（不参与本应用）。**没有真实视觉 API 授权**。
+Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons 6.8.3，PyInstaller 6.16.0，pytest 8.4.2。一块显示器，Qt 逻辑几何 1707×1067，125% 缩放。**本机摄像头 2 个**（`ASUS FHD webcam`、`ASUS IR camera`；按可执行文件路径授权），音频输入 1 个（不参与本应用）。**没有真实视觉 API 授权**。
 
 ## 自动化测试
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-# 221 passed, 1 skipped in 8.05s
+# 221 passed, 1 skipped in 8.05s   （历史结果）
 ```
 
 跳过项是既有约定：`tests/test_assets.py:41` 私有图片不在公开源码中时跳过。
@@ -127,8 +231,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
 ```
 
 - 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 423 个文件，114,984,758 B）
-- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,254,541 B
-- SHA-256：随产物生成，见 `dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip.sha256`（本机构建记录：`build\build-round3b.log`）
+- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.1-Windows-local.zip`，48,254,541 B
+- SHA-256：随产物生成，见 `dist\v2.0-local\NailongQuanxue-v2.0.1-Windows-local.zip.sha256`（本机构建记录：`build\build-round3b.log`）
 - 审计：bundle 748 项 PASS、ZIP 749 项 PASS；包内只有 `assets/default_break.mp4` 与 `assets/fallback_overlay.jpg` 两个固定素材，**没有** `settings.json`、`.sqlite3`、日志或个人媒体。
 
 ## 未验证（不得视为通过）

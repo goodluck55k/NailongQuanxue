@@ -115,10 +115,13 @@ def main():
                     dialog.next_step()
                     assert dialog.pages.currentIndex() == 1
                     QTest.mouseClick(dialog.start_record_button, Qt.MouseButton.LeftButton)
-                    if report["camera_devices"] == 0:
-                        assert "没有可用摄像头" in dialog.record_status.text(), dialog.record_status.text()
+                    status = dialog.record_status.text()
+                    if "摄像头" in status:
+                        # 两种真实情况都要如实反映：设备不存在，或设备存在但 Windows 拒绝本程序。
+                        assert ("没有可用摄像头" in status or "拒绝" in status or "授权" in status), status
                         assert not dialog.confirm_button.isEnabled()
-                        report["checks"].append("real no-camera error, confirmation stays disabled")
+                        report["camera_error"] = status
+                        report["checks"].append("camera unavailable is reported honestly, confirmation stays disabled")
                     dialog.reject()
                     report["checks"].append("surrender cancellation leaves break running")
                     assert win.surrender is None and win.screens.active

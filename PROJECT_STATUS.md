@@ -1,6 +1,6 @@
 # 奶龙劝学 V2.0 本地实施状态
 
-日期：2026-11-02。分支 `main`，V2.0.1 源码已同步到 GitHub `main`；**未创建 Release、未上传 Windows ZIP、未打标签**。
+日期：2026-11-02。分支 `main`，V2.0.1 源码已同步到 GitHub `main`；Windows 发行包由 `.github/workflows/release.yml` 在推送 `v*` 标签后自动构建并上传到 GitHub Release（`NailongQuanxue-v2.0.1-Windows-x64.zip` 与 `.sha256`）。
 
 ## 本轮做了什么
 

@@ -1,0 +1,178 @@
+name: Windows Release
+
+# 触发方式：推送 v* 标签，或手动指定一个已存在的标签。
+# 流程：测试 → 打包（build.ps1 -Release）→ 审计 → SHA-256 → 创建 GitHub Release 并上传两个附件。
+# 任何一步失败都不会产生 Release；已存在的 Release 不会被覆盖。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签（例如 v2.0.1，必须已存在且位于 main 上）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and publish Windows package
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: '1'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target tag
+        id: tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $tag = '${{ inputs.tag }}'.Trim()
+          } else {
+            $tag = '$env:GITHUB_REF_NAME'.Trim()
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Not a release tag: '$tag'" }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
+          Write-Host "Releasing $tag"
+
+      - name: Require the tag to be on main
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ steps.tag.outputs.tag }}'
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch origin/main' }
+          $target = (git rev-parse "$tag^{commit}").Trim()
+          git merge-base --is-ancestor $target origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Tag $tag is not on main; refusing to publish an unmerged commit." }
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $target) { throw "Checked-out commit $head is not the tagged commit $target (pass the tag itself)." }
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip==24.2
+          if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed' }
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw 'dependency install failed' }
+          python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'dependency check failed' }
+
+      - name: Run test suite
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw 'pytest failed; refusing to publish' }
+
+      - name: Compile and version checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m compileall -q app main.py tools tests
+          if ($LASTEXITCODE -ne 0) { throw 'compile check failed' }
+          python tools/read_version.py --check '${{ steps.tag.outputs.tag }}'
+          if ($LASTEXITCODE -ne 0) { throw 'APP_VERSION does not match the release tag' }
+          python tools/scan_public.py --sources . --allow-fixed-assets --report build\source-audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'source audit failed' }
+
+      - name: Build release package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Command python).Source
+          ./build.ps1 -Release -SkipTests -Python $python -Version '${{ steps.tag.outputs.version }}'
+          if ($LASTEXITCODE -ne 0) { throw 'build.ps1 -Release failed' }
+
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ steps.tag.outputs.version }}'
+          $dist = "dist\v$version-release"
+          $zip = Join-Path $dist "NailongQuanxue-v$version-Windows-x64.zip"
+          $sum = "$zip.sha256"
+          if (-not (Test-Path -LiteralPath $zip)) { throw "Missing ZIP: $zip" }
+          if (-not (Test-Path -LiteralPath $sum)) { throw "Missing checksum: $sum" }
+          if ((Get-Item -LiteralPath $zip).Length -lt 20MB) { throw 'ZIP is suspiciously small' }
+          $expected = (Get-Content -LiteralPath $sum -Raw).Trim().Split(' ')[0]
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "SHA-256 mismatch: file=$expected actual=$actual" }
+          python tools/verify_bundle.py $zip --report (Join-Path $dist 'bundle-verify.json')
+          if ($LASTEXITCODE -ne 0) { throw 'release bundle verification failed' }
+          Get-ChildItem -LiteralPath $dist | Format-Table Name, Length
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+          "sum=$sum" >> $env:GITHUB_OUTPUT
+        id: artifacts
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NailongQuanxue-${{ steps.tag.outputs.tag }}-Windows-x64
+          path: |
+            dist/v${{ steps.tag.outputs.version }}-release/*.zip
+            dist/v${{ steps.tag.outputs.version }}-release/*.zip.sha256
+            dist/v${{ steps.tag.outputs.version }}-release/bundle-verify.json
+          if-no-files-found: error
+
+      - name: Refuse to overwrite an existing release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ steps.tag.outputs.tag }}'
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; delete it manually if a republication is intended." }
+          Write-Host "No existing release for $tag"
+
+      - name: Publish release with assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ steps.tag.outputs.tag }}'
+          $version = '${{ steps.tag.outputs.version }}'
+          $dist = "dist\v$version-release"
+          $zip = Join-Path $dist "NailongQuanxue-v$version-Windows-x64.zip"
+          $sum = "$zip.sha256"
+          gh release create $tag $zip $sum `
+            --title "奶龙劝学 $tag" `
+            --notes-file RELEASE_NOTES.md `
+            --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
+          # 失败即删除半成品发布，避免出现"有 Release 没有附件"的假成功状态。
+          $assets = gh release view $tag --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read back the release assets' }
+          $need = @("NailongQuanxue-v$version-Windows-x64.zip", "NailongQuanxue-v$version-Windows-x64.zip.sha256")
+          foreach ($name in $need) {
+            if ($assets -notcontains $name) {
+              gh release delete $tag --yes
+              throw "Asset $name did not appear on the release; deleted the incomplete release."
+            }
+          }
+          Write-Host "Release $tag published with: $($need -join ', ')"
