@@ -144,6 +144,7 @@ V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图�
 
 - [Windows 使用说明](README-Windows.md)
 - [摄像头与录像验证报告](docs/P1-摄像头与录像验证报告.md)（本机实测 7/7 通过）
+- [人工验收清单](docs/人工验收清单.md)（按操作顺序逐条勾选）
 - [版本迁移记录](MIGRATION_V1_1.md)
 - [测试报告](TEST_REPORT.md)
 - [手动验收清单](MANUAL_TESTS.md)

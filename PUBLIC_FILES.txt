@@ -20,6 +20,7 @@ app/action_verdict.py
 app/ai_config.py
 app/ai_panel.py
 app/async_task.py
+app/camera_access.py
 app/camera_recorder.py
 app/config_store.py
 app/frame_sampler.py
@@ -238,6 +239,7 @@ tests/conftest.py
 tests/test_action_verdict.py
 tests/test_ai_config.py
 tests/test_assets.py
+tests/test_camera_access.py
 tests/test_camera_recorder.py
 tests/test_frame_sampler.py
 tests/test_public_audit.py

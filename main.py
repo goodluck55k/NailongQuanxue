@@ -29,11 +29,45 @@ def configure_logging():
         logging.basicConfig(level=logging.INFO, handlers=[logging.NullHandler()])
 
 
+def write_self_check(path):
+    """把本机环境与摄像头诊断写成 JSON，供打包后核对（不弹窗、不上传）。"""
+    import json
+    from PySide6.QtCore import qVersion
+    from PySide6.QtWidgets import QApplication
+    from app.camera_access import diagnose
+    from app.config_store import data_directory
+
+    QApplication(sys.argv[:1])
+    diagnosis = diagnose()
+    payload = {
+        "version": "2.0.0",
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "executable": sys.executable,
+        "qt": qVersion(),
+        "data_directory": str(data_directory()),
+        "camera": {
+            "state": diagnosis.state,
+            "names": diagnosis.names,
+            "activation_hr": None if diagnosis.activation is None else hex(diagnosis.activation),
+            "error": diagnosis.error,
+            "message": diagnosis.message(),
+        },
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="奶龙劝学 — 少玩一会儿，多学一点")
     parser.add_argument("--test-seconds", type=positive_seconds,
                        help="自动开始指定秒数的开发计时，例如 15")
+    parser.add_argument("--self-check", metavar="PATH",
+                       help="只写一份环境与摄像头诊断 JSON 后退出（用于打包核对）")
     args = parser.parse_args()
+    if args.self_check:
+        return write_self_check(args.self_check)
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QMessageBox
     from app.main_window import MainWindow

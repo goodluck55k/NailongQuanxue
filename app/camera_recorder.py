@@ -14,6 +14,7 @@ from PySide6.QtCore import QElapsedTimer, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import (QCamera, QMediaCaptureSession, QMediaDevices, QMediaFormat,
                                   QMediaRecorder, QVideoSink)
 
+from . import camera_access
 from .frame_sampler import FrameSampler
 
 DEFAULT_CLIP_MS = 12000
@@ -126,15 +127,17 @@ class CameraRecorder(QObject):
         self.watchdog.timeout.connect(self._stop_timeout)
         self.stopping = False
         self._last_preview = -1000
+        self.diagnosis = None
 
     def start(self):
         if self.active:
             return
         devices = QMediaDevices.videoInputs()
         if not devices:
-            self.failed.emit(
-                "没有可用摄像头。请连接摄像头，并在 Windows 设置 → 隐私和安全性 → 摄像头 里"
-                "允许本程序访问摄像头后重试，或取消返回。")
+            # Qt 在 Windows 把"被隐私设置拒绝"和"没有摄像头"都表现为空列表，
+            # 再问一次 Media Foundation，好给出可执行的提示。
+            self.diagnosis = camera_access.diagnose()
+            self.failed.emit(self.diagnosis.message())
             return
         try:
             self.path = clip_directory() / f"clip-{uuid.uuid4().hex}.mp4"

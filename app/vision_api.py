@@ -54,6 +54,8 @@ class Answer:
     lean: bool
     confidence: float | None
     reason: str
+    # 模型若额外给出"动作顺序是否成立"，这里会带上；缺省 None 表示模型没提到。
+    sequence: bool | None = None
 
 
 def data_url(jpeg_bytes):
@@ -211,6 +213,7 @@ def parse_answer(text):
     lean = _boolean(pick("lean_observed", "lean", "leaning", "前倾"))
     reason = pick("reason", "说明", "note")
     confidence = pick("confidence")
+    sequence = _boolean(pick("sequence_verified", "sequence", "order_ok", "动作顺序"))
     if passed is None:
         raise VisionError("bad_response", "缺少 pass 布尔字段")
     if cycles is None:
@@ -225,7 +228,7 @@ def parse_answer(text):
         confidence = None
     return Answer(passed=passed, cycles=cycles, hand=hand, lean=lean,
                   confidence=None if confidence is None else float(confidence),
-                  reason=reason.strip()[:200])
+                  reason=reason.strip()[:200], sequence=sequence)
 
 
 class VisionClient:

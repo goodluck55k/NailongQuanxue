@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QProgres
 from .action_verdict import check_evidence, decide, failure, prompt_for
 from .async_task import run_async
 from .camera_recorder import DEFAULT_CLIP_MS, CameraRecorder, _discard
+from . import camera_access
 from .frame_sampler import FrameSampler
 from .supervision import DECLARATION
 from .theme import STYLE
@@ -189,6 +190,11 @@ class SurrenderDialog(QDialog):
         row.addWidget(self.stop_button)
         row.addWidget(self.reconnect_button)
         box.addLayout(row)
+        self.permission_button = QPushButton("打开 Windows 摄像头权限")
+        self.permission_button.setObjectName("secondaryButton")
+        self.permission_button.setVisible(False)
+        self.permission_button.clicked.connect(self.open_camera_permission)
+        box.addWidget(self.permission_button)
         self.pages.addWidget(page)
 
     def _build_result(self):
@@ -275,6 +281,7 @@ class SurrenderDialog(QDialog):
         self.preview.show_image(QImage())
         self.record_status.setText("正在连接摄像头…")
         self.stop_button.setEnabled(False)
+        self.permission_button.setVisible(False)
         if self.recorder is not None:
             self.recorder.stop()
             self.recorder.deleteLater()
@@ -313,8 +320,22 @@ class SurrenderDialog(QDialog):
         if self.cleaned:
             return
         self.stop_button.setEnabled(False)
+        diagnosis = getattr(self.recorder, "diagnosis", None)
+        blocked = bool(diagnosis is not None and diagnosis.blocked)
+        self.permission_button.setVisible(blocked)
+        if blocked:
+            text = text + "\n授权之后点「重新连接摄像头」重试。"
         self.record_status.setText(text)
         self.message.setText("录像未完成。可以重新连接摄像头，或取消返回继续坚持。")
+
+    def open_camera_permission(self):
+        if not camera_access.open_privacy_settings():
+            self.record_status.setText(
+                "没能自动打开设置页。请手动打开 设置 → 隐私和安全性 → 摄像头，"
+                "允许本程序访问后点「重新连接摄像头」。")
+            return
+        self.record_status.setText(
+            "已打开 Windows 摄像头设置页。请在列表里允许本程序访问，然后点「重新连接摄像头」。")
 
     def _clip_ready(self, path, frames, span_ms):
         if self.cleaned:

@@ -12,7 +12,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-# 213 passed, 1 skipped in 9.64s
+# 221 passed, 1 skipped in 8.05s
 ```
 
 跳过项是既有约定：`tests/test_assets.py:41` 私有图片不在公开源码中时跳过。
@@ -32,6 +32,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 | `tests/test_frame_sampler.py` | 6 | 采样节流与缩放、容量上限、等距取帧含首尾、运动量估计、JPEG 编码 |
 | `tests/test_assets.py` | 5 | 固定素材存在性与指纹 |
 | `tests/test_v11_resources.py` | 4 | 资源解析只允许文件名、防止路径穿越 |
+| `tests/test_camera_access.py` | 6 | 摄像头诊断三态文案、阻止时给出授权步骤、设置页 URI |
 | `tests/test_camera_recorder.py` | 5 | 过期临时片段清理只删本应用命名、目录缺失不报错、临时目录位置、**编码器占用时延迟删除并重试**、自由文件立即删除 |
 
 判定逻辑的关键回归（对应"静态摆拍不能误判为两组动作"）：
@@ -93,7 +94,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 
 ```powershell
 .\.venv\Scripts\python.exe tools\exe_smoke.py 'dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe' --report build\exe-smoke-round2.json
-# result: PASS, 18.0 s
+# result: PASS, 17.4 s
 ```
 
 检查项：首次 AI 提醒出现并可关闭 → EXE 从其他工作目录启动并最小化 → 最小化状态下最后十秒提醒仍出现 → 归零后遮挡窗出现 → 覆盖窗「解除限制」打开投降书 → 投降书底部取消后休息继续、无残留窗口。**未在 EXE 上跑通完整动作挑战**（本机无摄像头）；测试结束时由工具终止其自身启动的进程，不记为"软件正常退出"。
@@ -109,6 +110,13 @@ powershell -ExecutionPolicy Bypass -File tools\camera_check.ps1
 
 过程中发现并修复：取消录制时编码器仍占用文件导致 `unlink()` 失败、临时 mp4 残留 —— 改为 `_discard()` 延迟重试（250 ms）并在 `_teardown()` 前先 `recorder.stop()`。
 
+打包后的 EXE 也做了同样的诊断（`NailongQuanxue.exe --self-check <json>`），结果：
+
+```json
+{"frozen": true, "qt": "6.8.3", "camera": {"state": "blocked", "names": ["ASUS FHD webcam"], "activation_hr": "0x80070005"}}
+```
+
+这说明 EXE 里的摄像头诊断链路（Qt + Media Foundation）可以正常工作，能分辨"系统拒绝了本程序"和"没有摄像头"，并给出授权引导；只差用户在 Windows 设置里给这个 EXE 授权一次。
 本机限制（重要）：Windows 按"可执行文件路径"单独授权摄像头，未获授权的 python.exe/EXE 会被静默拒绝（`E_ACCESSDENIED`），Qt 因此枚举为 0。用户需在 设置 → 隐私和安全性 → 摄像头 里为本程序授权一次。详见 `docs/P1-摄像头与录像验证报告.md`。
 
 ## 构建产物
@@ -118,8 +126,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
 # exit=0
 ```
 
-- 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 421 个文件，114,964,316 B）
-- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,237,831 B
+- 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 421 个文件，114,973,965 B）
+- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,248,221 B
 - SHA-256：随产物生成，见 `dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip.sha256`（本机构建记录：`build\build-round3b.log`）
 - 审计：bundle 748 项 PASS、ZIP 749 项 PASS；包内只有 `assets/default_break.mp4` 与 `assets/fallback_overlay.jpg` 两个固定素材，**没有** `settings.json`、`.sqlite3`、日志或个人媒体。
 

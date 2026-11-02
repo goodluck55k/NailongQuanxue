@@ -85,3 +85,17 @@ def test_prompt_states_the_rules_and_the_json_contract():
 @pytest.mark.parametrize("cycles", [0, 1])
 def test_too_few_cycles(cycles):
     assert decide(answer(cycles=cycles), moving()).status == NOT_PASSED
+
+def test_model_says_the_order_is_wrong():
+    verdict = decide(Answer(passed=True, cycles=3, hand=True, lean=True,
+                            confidence=0.8, reason="顺序混乱", sequence=False), moving())
+
+    assert verdict.status == NOT_PASSED
+    assert "顺序" in verdict.reason
+
+
+def test_missing_sequence_field_does_not_block_a_good_take():
+    verdict = decide(Answer(passed=True, cycles=2, hand=True, lean=True,
+                            confidence=0.9, reason="两组"), moving())
+
+    assert verdict.passed

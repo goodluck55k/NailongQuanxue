@@ -60,6 +60,9 @@ def decide(answer: Answer, motion, required=REQUIRED_CYCLES):
         if answer.passed:
             detail = "模型自述通过，但" + detail
         return Verdict(NOT_PASSED, detail, answer.cycles)
+    if getattr(answer, "sequence", None) is False:
+        return Verdict(NOT_PASSED, "模型认为动作顺序不成立（未做到「手放腹部 → 前倾 → 回正」的先后顺序）",
+                       answer.cycles)
     if not answer.passed:
         reason = answer.reason or "模型判断动作未达到标准"
         return Verdict(NOT_PASSED, f"模型判断：{reason}", answer.cycles)
@@ -91,7 +94,10 @@ def prompt_for(frame_count, span_seconds):
         "3. 无法确定时判定未通过，不要猜测。\n"
         "只输出一个 JSON 对象，不要代码块、不要解释：\n"
         '{"pass": true 或 false, "motion_cycles": 整数, "hand_on_belly": true 或 false, '
-        '"lean_observed": true 或 false, "confidence": 0 到 1 的小数, '
-        '"reason": "不超过 40 字的中文说明"}\n'
-        '只有当 motion_cycles 不少于 2、hand_on_belly 与 lean_observed 都为 true 时，pass 才能为 true。'
+        '"lean_observed": true 或 false, "sequence_verified": true 或 false, '
+        '"confidence": 0 到 1 的小数, "reason": "不超过 40 字的中文说明"}\n'
+        '只有当 motion_cycles 不少于 2、hand_on_belly 与 lean_observed 都为 true、'
+        'sequence_verified 也为 true 时，pass 才能为 true。\n'
+        'sequence_verified 表示画面顺序确实是「手放在腹部 → 身体前倾 → 回正」，'
+        '而不是明显乱序或只有一次弯腰。'
     )
