@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect, 
 from .ai_config import migrate_plain_key, read_settings
 from .ai_panel import AiSetupDialog
 from .camera_recorder import CameraRecorder, cleanup_stale_clips
-from .config_store import (ConfigStore, data_directory, duration_from_parts, relocate_data,
+from .config_store import (ConfigStore, data_directory, duration_from_parts, preserve_uncommitted_migration, relocate_data,
                            remember_data_directory, writable)
 from .records_store import RecordsStore
 from .reminder_window import ReminderWindow
@@ -260,7 +260,14 @@ class MainWindow(QMainWindow):
         try:
             remember_data_directory(target)
         except OSError as error:
-            QMessageBox.warning(self, "无法记录新目录", "数据目录未更改：\n" + str(error))
+            try:
+                recovery = preserve_uncommitted_migration(target)
+                recovery_detail = "已将复制的数据移至 %s，可重新选择目标目录重试。" % recovery
+            except OSError as recovery_error:
+                recovery_detail = ("无法自动移开复制的数据：%s\n请将 %s 移到其他位置后重试。"
+                                   % (recovery_error, target))
+            QMessageBox.warning(self, "无法记录新目录",
+                                "数据目录未更改：\n%s\n%s" % (error, recovery_detail))
             return
         detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
         self.banner_text.setText(

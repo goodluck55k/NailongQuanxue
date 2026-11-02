@@ -139,8 +139,22 @@ def _clear_registry_data_directory():
 
 def remembered_data_directory():
     """读取用户改过的数据目录：先看 HKCU，再看几个固定位置的指针文件。"""
-    # A committed location file is authoritative; legacy registry and pointer
-    # entries are only consulted until the first successful new-style change.
+    # V2 registry value is authoritative, including an empty reset marker.
+    # If absent, preserve compatibility with the prior pointer precedence.
+    try:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH) as key:
+                value, _kind = winreg.QueryValueEx(key, "DataDirectoryV2")
+        except FileNotFoundError:
+            pass
+        else:
+            return Path(value) if isinstance(value, str) and value else None
+    except ImportError:
+        pass
+    except OSError:
+        # An inaccessible authority must not resurrect an obsolete pointer.
+        return None
     for key in ("LOCALAPPDATA", "APPDATA"):
         base = os.environ.get(key)
         if base:
@@ -178,52 +192,52 @@ def remembered_data_directory():
     return None
 
 
-def remember_data_directory(folder):
-    """Atomically commit one authoritative pointer; leave legacy stores untouched."""
-    import tempfile
-
-    for key in ("LOCALAPPDATA", "APPDATA"):
-        base = os.environ.get(key)
-        if base:
-            pointer = Path(base) / "NailongQuanxue" / "location.txt"
-            break
-    else:
-        raise OSError("无法确定数据目录指针的位置")
-    pointer.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
+def _write_authoritative_directory(value):
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=pointer.parent,
-                                         prefix=".location-", delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(str(folder))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, pointer)
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink()
+        import winreg
+    except ImportError as error:
+        raise OSError("无法使用 Windows 用户注册表保存数据目录") from error
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH) as key:
+        winreg.SetValueEx(key, "DataDirectoryV2", 0, winreg.REG_SZ, value)
+
+
+def remember_data_directory(folder):
+    """Commit a single HKCU value without depending on the old data directory."""
+    _write_authoritative_directory(str(Path(folder)))
     return True
 
 
 def forget_data_directory():
-    removed = _clear_registry_data_directory()
-    for pointer in _pointer_files():
-        try:
-            pointer.unlink()
-            removed = True
-        except OSError:
-            continue
-    return removed
+    # An empty authoritative value suppresses all legacy records, even when
+    # their locations are read-only and cannot be removed.
+    _write_authoritative_directory("")
+    return True
+
+
+def preserve_uncommitted_migration(target):
+    """Move a completed but unselected copy aside so migration can be retried."""
+    import tempfile
+
+    target = Path(target)
+    recovery = Path(tempfile.mkdtemp(prefix=".nailong-recovery-", dir=target.parent))
+    try:
+        target.rename(recovery / target.name)
+    except OSError:
+        recovery.rmdir()
+        raise
+    return recovery / target.name
 
 
 def relocate_data(source, target):
     """Copy a consistent data snapshot without overwriting existing files."""
     import shutil
     import sqlite3
+    import tempfile
     from contextlib import closing
 
     source, target = Path(source).resolve(), Path(target).resolve()
     copied = []
+    stage = None
 
     def relative_internal(value):
         if not isinstance(value, str) or not value:
@@ -237,7 +251,7 @@ def relocate_data(source, target):
             return None
 
     def copy_path(relative):
-        origin, destination = source / relative, target / relative
+        origin, destination = source / relative, stage / relative
         if not origin.exists():
             return
         if destination.exists():
@@ -254,7 +268,10 @@ def relocate_data(source, target):
     try:
         if source == target or source in target.parents or target in source.parents:
             raise ValueError("新旧数据目录不能相同或互相包含")
-        target.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            raise FileExistsError("目标目录已有数据，未覆盖：%s" % target)
+        stage = Path(tempfile.mkdtemp(prefix=".nailong-migration-", dir=target.parent))
         settings_path = source / "settings.json"
         settings = None
         media_dirs = {Path("photos"), Path("videos")}
@@ -269,8 +286,8 @@ def relocate_data(source, target):
                     settings[key] = str(target / relative)
         for name in ("settings.json", "pending-events.json", "records.sqlite3",
                      "records.sqlite3-wal", "records.sqlite3-shm"):
-            if (target / name).exists():
-                raise FileExistsError("目标位置已有数据，未覆盖：%s" % (target / name))
+            if (stage / name).exists():
+                raise FileExistsError("目标位置已有数据，未覆盖：%s" % (stage / name))
         # Copy parent directories first, then skip paths already included in them.
         roots = []
         copied_media = set()
@@ -279,14 +296,14 @@ def relocate_data(source, target):
                 copy_path(relative)
                 roots.append(relative)
         if settings is not None:
-            with (target / "settings.json").open("x", encoding="utf-8") as handle:
+            with (stage / "settings.json").open("x", encoding="utf-8") as handle:
                 json.dump(settings, handle, ensure_ascii=False, indent=2)
             copied.append("settings.json")
         copy_path(Path("pending-events.json"))
         database = source / "records.sqlite3"
         if database.is_file():
             with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src:
-                with closing(sqlite3.connect(target / "records.sqlite3")) as dst:
+                with closing(sqlite3.connect(stage / "records.sqlite3")) as dst:
                     src.backup(dst)
                     columns = {row[1] for row in dst.execute("PRAGMA table_info(events)")}
                     with dst:
@@ -307,8 +324,20 @@ def relocate_data(source, target):
                                 dst.execute(f"UPDATE events SET {column}=? WHERE rowid=?",
                                             (str(target / relative), rowid))
             copied.append("records.sqlite3")
+        # Removing an empty destination cannot discard user data. Rename the
+        # complete sibling snapshot only after all copying and updates succeed.
+        if target.exists():
+            target.rmdir()
+        stage.rename(target)
+        stage = None
     except (OSError, ValueError, TypeError, sqlite3.Error, shutil.Error) as error:
-        return copied, [str(error)]
+        errors = [str(error)]
+        if stage is not None:
+            try:
+                shutil.rmtree(stage)
+            except OSError as cleanup_error:
+                errors.append("无法清理临时目录 %s：%s" % (stage, cleanup_error))
+        return [], errors
     return copied, []
 
 
