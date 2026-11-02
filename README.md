@@ -6,7 +6,7 @@
 
 **你可以继续玩，但时间到了，奶龙真的会来！**
 
-适用平台： <strong>Windows 10 / 11（64 位）</strong>　·　当前版本： <strong>v2.0.0（本地构建，未发布）</strong>　·　本地运行，无需注册
+适用平台： <strong>Windows 10 / 11（64 位）</strong>　·　当前版本： <strong>v2.0.1（本地构建，未发布）</strong>　·　本地运行，无需注册
 
 </div>
 

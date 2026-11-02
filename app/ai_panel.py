@@ -1,8 +1,11 @@
 """AI connection UI: the settings tab and the first-run reminder dialog."""
+import logging
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QVBoxLayout, QWidget)
 
+from .config_store import ConfigWriteError
 from .ai_config import (PROTOCOLS, PROTOCOL_ORDER, AiConfigError, AiSettings, clear_settings,
                         read_settings, save_settings)
 from .async_task import run_async
@@ -89,8 +92,13 @@ class AiSettingsPanel(QWidget):
                        != (self.settings.protocol, self.settings.base_url, self.settings.api_key,
                            self.settings.model))
             written = save_settings(self.config, candidate, verified=False if changed else None)
+        except ConfigWriteError as error:
+            logging.getLogger("NailongQuanxue").error(
+                "AI config save failed: %s", error, exc_info=error.__cause__)
+            self.status.setText(str(error))
+            return False
         except (AiConfigError, OSError, ValueError) as error:
-            self.status.setText(f"未保存：{getattr(error, 'args', ['配置不合法'])[0]}")
+            self.status.setText(f"未保存：{error}")
             return False
         self.settings = written
         self.api_key.setText(written.api_key)
@@ -102,8 +110,11 @@ class AiSettingsPanel(QWidget):
         try:
             candidate = self.collect()
             written = save_settings(self.config, candidate, verified=False)
+        except ConfigWriteError as error:
+            self.status.setText(str(error))
+            return
         except (AiConfigError, OSError, ValueError) as error:
-            self.status.setText(f"无法测试：{getattr(error, 'args', ['配置不合法'])[0]}")
+            self.status.setText(f"无法测试：{error}")
             return
         self.settings = written
         self.save_button.setEnabled(False)
@@ -120,8 +131,11 @@ class AiSettingsPanel(QWidget):
             return
         try:
             written = save_settings(self.config, settings, verified=True)
-        except (AiConfigError, OSError, ValueError):
-            self.status.setText("连接成功，但配置未能写入本地文件。")
+        except ConfigWriteError as error:
+            self.status.setText("连接成功，但%s" % str(error))
+            return
+        except (AiConfigError, OSError, ValueError) as error:
+            self.status.setText(f"连接成功，但配置未能写入本地文件：{error}")
             return
         self.settings = written
         self.status.setText(written.status_text() + f" · 模型回复：{result}")
@@ -130,8 +144,11 @@ class AiSettingsPanel(QWidget):
     def clear(self):
         try:
             clear_settings(self.config)
-        except (OSError, ValueError):
-            self.status.setText("无法写入本地配置。")
+        except ConfigWriteError as error:
+            self.status.setText(str(error))
+            return
+        except (OSError, ValueError) as error:
+            self.status.setText(f"无法写入本地配置：{error}")
             return
         for edit in (self.base_url, self.api_key, self.model):
             edit.clear()

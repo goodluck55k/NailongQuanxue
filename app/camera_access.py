@@ -148,6 +148,8 @@ class Diagnosis:
         return self.state == BLOCKED
 
     def title(self):
+        if self.state == OK:
+            return "摄像头可以正常使用"
         if self.state == BLOCKED:
             return "Windows 阻止了摄像头访问"
         if self.state == NONE:
@@ -164,6 +166,10 @@ class Diagnosis:
         if self.state == NONE:
             return ("没有检测到摄像头。请确认摄像头已连接、没有被物理开关或快捷键关闭，"
                     "然后点「重新连接摄像头」。")
+        if self.state == OK:
+            if self.names:
+                return "摄像头可用：%s。" % "、".join(self.names)
+            return "摄像头可用。"
         return ("无法确认摄像头状态（%s）。可以点「重新连接摄像头」重试，"
                 "或检查 Windows 的摄像头隐私设置。" % (self.error or "未知原因"))
 

@@ -13,7 +13,7 @@
 | `main_window.py` | 新增 AI 状态行、首次提醒、录像归档；`confirm_surrender` 增加 `clip_path` 与判定结果 |
 | `photo_storage.py` | 原样保留，用于读取 V1.1 旧照片 |
 | `video_break.py` | 原样保留（静音循环播放示范视频） |
-| `build.ps1` / `tools` | 产物改为 `dist/v2.0-local`、`NailongQuanxue-v2.0.0-Windows-local.zip`；`v11_smoke.py` 由 `v2_smoke.py` 取代；`exe_smoke.py` 增加首次 AI 提醒的处理 |
+| `build.ps1` / `tools` | 产物改为 `dist/v2.0-local`、`NailongQuanxue-v2.0.1-Windows-local.zip`；`v11_smoke.py` 由 `v2_smoke.py` 取代；`exe_smoke.py` 增加首次 AI 提醒的处理 |
 
 新增：`ai_config.py`、`vision_api.py`、`ai_panel.py`、`async_task.py`、`camera_recorder.py`、`frame_sampler.py`、`action_verdict.py`、`video_archive.py`。
 

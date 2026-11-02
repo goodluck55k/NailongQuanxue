@@ -243,6 +243,7 @@ tests/test_camera_access.py
 tests/test_camera_recorder.py
 tests/test_frame_sampler.py
 tests/test_public_audit.py
+tests/test_self_check.py
 tests/test_secure_credentials.py
 tests/test_storage.py
 tests/test_supervision.py

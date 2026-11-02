@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import sys
 
+APP_VERSION = "2.0.1"
+
 
 def positive_seconds(value):
     seconds = float(value)
@@ -29,18 +31,34 @@ def configure_logging():
         logging.basicConfig(level=logging.INFO, handlers=[logging.NullHandler()])
 
 
-def write_self_check(path):
-    """把本机环境与摄像头诊断写成 JSON，供打包后核对（不弹窗、不上传）。"""
+def default_self_check_path():
+    """没有指定路径时，写到当前用户数据目录下（通常是可写的）。"""
+    from app.config_store import data_directory
+    return data_directory() / "diagnostics" / "self-check.json"
+
+
+def write_self_check(path=None):
+    """把本机环境与摄像头诊断写成 JSON，供打包后核对（不弹窗、不上传）。
+
+    目标路径写不进去时打印一句能看懂的中文原因，而不是抛 Python Traceback。
+    """
     import json
     from PySide6.QtCore import qVersion
     from PySide6.QtWidgets import QApplication
     from app.camera_access import diagnose
-    from app.config_store import data_directory
+    from app.config_store import data_directory, describe_os_error
 
-    QApplication(sys.argv[:1])
+    target = Path(path) if path else default_self_check_path()
+    if target.exists() and target.is_dir():
+        print("自检：%s 是一个目录，请指定一个文件路径，例如 C:\\Temp\\self-check.json" % target,
+              file=sys.stderr)
+        return 2
+
+    if QApplication.instance() is None:
+        QApplication(sys.argv[:1])
     diagnosis = diagnose()
     payload = {
-        "version": "2.0.0",
+        "version": APP_VERSION,
         "frozen": bool(getattr(sys, "frozen", False)),
         "executable": sys.executable,
         "qt": qVersion(),
@@ -53,9 +71,15 @@ def write_self_check(path):
             "message": diagnosis.message(),
         },
     }
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as error:
+        print("自检结果无法写入 %s：%s" % (target, describe_os_error(error, target)), file=sys.stderr)
+        print("可以不带参数重新运行（默认写到 %s），或换一个自己确认可写的目录。"
+              % default_self_check_path(), file=sys.stderr)
+        return 2
+    print("自检结果已写入：%s" % target)
     return 0
 
 
@@ -63,11 +87,15 @@ def main():
     parser = argparse.ArgumentParser(description="奶龙劝学 — 少玩一会儿，多学一点")
     parser.add_argument("--test-seconds", type=positive_seconds,
                        help="自动开始指定秒数的开发计时，例如 15")
-    parser.add_argument("--self-check", metavar="PATH",
-                       help="只写一份环境与摄像头诊断 JSON 后退出（用于打包核对）")
+    parser.add_argument("--self-check", nargs="?", const="", default=None, metavar="PATH",
+                       help="只写一份环境与摄像头诊断 JSON 后退出；省略 PATH 时写入数据目录")
     args = parser.parse_args()
-    if args.self_check:
-        return write_self_check(args.self_check)
+    if args.self_check is not None:
+        try:
+            return write_self_check(args.self_check)
+        except Exception as error:  # 自检失败也不能甩出 Traceback
+            print("自检未能完成：%s: %s" % (type(error).__name__, error), file=sys.stderr)
+            return 2
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QMessageBox
     from app.main_window import MainWindow
@@ -76,7 +104,7 @@ def main():
     configure_logging()
     app = QApplication(sys.argv[:1])
     app.setApplicationName("奶龙劝学")
-    app.setApplicationVersion("2.0.0")
+    app.setApplicationVersion(APP_VERSION)
     app.setQuitOnLastWindowClosed(False)
     window = MainWindow()
 

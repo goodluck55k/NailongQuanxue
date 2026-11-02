@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QLa
                                QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget)
 
 from .ai_panel import AiSettingsPanel
+from .config_store import (ConfigWriteError, default_data_directory,
+                           forget_data_directory, remembered_data_directory)
 from .photo_storage import PhotoStorage
 from .records_view import RecordsView
 from .theme import STYLE
@@ -75,6 +77,13 @@ class SettingsDialog(QDialog):
             button.clicked.connect(callback)
             video_buttons.addWidget(button)
         storage_layout.addLayout(video_buttons)
+        storage_layout.addSpacing(10)
+        self.data_dir_label = QLabel()
+        self.data_dir_label.setWordWrap(True)
+        storage_layout.addWidget(self.data_dir_label)
+        reset = QPushButton("恢复默认数据目录")
+        reset.clicked.connect(self.reset_data_directory)
+        storage_layout.addWidget(reset)
         storage_layout.addStretch()
         self.tabs.addTab(storage_page, "存储与配额")
         self.ai = AiSettingsPanel(config)
@@ -92,8 +101,25 @@ class SettingsDialog(QDialog):
         try:
             self.config.save(mode=self.mode.currentData())
             self.preferences_changed.emit()
+        except ConfigWriteError as error:
+            QMessageBox.warning(self, "设置未保存", str(error))
         except (OSError, ValueError):
             QMessageBox.warning(self, "设置未保存", "无法写入本地配置，原设置未修改。")
+
+    def reset_data_directory(self):
+        if forget_data_directory():
+            QMessageBox.information(self, "已恢复默认数据目录",
+                                    "重启程序后会重新使用默认目录。\n原目录与新目录里的文件都不会被删除。")
+        else:
+            QMessageBox.information(self, "当前就是默认数据目录",
+                                    "没有找到自定义数据目录的记录。")
+
+    def update_data_directory(self):
+        remembered = remembered_data_directory()
+        text = "数据目录：" + str(self.config.root)
+        if remembered is not None:
+            text += "\n（自定义目录；默认是 %s）" % default_data_directory()
+        self.data_dir_label.setText(text)
 
     def update_capacity(self):
         path = self.config.values["photo_directory"]
@@ -114,6 +140,10 @@ class SettingsDialog(QDialog):
                 if warning else ""))
         except (OSError, ValueError):
             self.video_capacity_label.setText("录像目录不可访问，保存录像可能失败；投降仍可确认。")
+        try:
+            self.update_data_directory()
+        except Exception:
+            pass
 
     def choose_folder(self):
         path = QFileDialog.getExistingDirectory(self, "选择本地照片目录", self.config.values["photo_directory"])

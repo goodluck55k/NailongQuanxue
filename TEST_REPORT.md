@@ -143,3 +143,49 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
 ## 结论
 
 代码、自动化测试、审计与打包在本机全部通过；V2.0 **达到"本地可试跑"状态**，但**未达到"动作识别已验收"**——真实正反例必须由用户在实机上确认。
+
+## 2.0.1 修复记录（配置无法保存）
+
+- 现象：填写视觉 AI 配置后点「保存配置」，界面显示「未保存：13」，配置未写入。
+- 定位：`app/ai_panel.py` 把 `OSError.args[0]` 直接显示出来，13 是 `EACCES`（`PermissionError`）的错误码；
+  真实失败点是 `ConfigStore.save()` 写 `settings.json.tmp` 时被系统拒绝（Windows 返回 `errno 13`）。
+  代码本身没有问题——是目标目录对当前进程不可写。
+- 修复：
+  1. `app/config_store.py` 新增 `describe_os_error()` / `ConfigWriteError`，把错误码翻成可操作的中文说明；
+     `writable()` 用于目录可写性预检。
+  2. `ConfigStore.save()` 对瞬时占用重试 3 次（120/240 ms），失败时保留原文件、清理半成品临时文件，
+     并记录完整原因到日志（不含密钥）。
+  3. `app/ai_panel.py` 保存/测试/清空全部改为显示真实原因，不再出现裸数字。
+  4. `app/main_window.py` 启动时预检数据目录，不可写则弹出说明，并提供「选择新的数据目录」
+     （复制现有数据后切换，原目录不删除）与「打开数据目录」两个操作。
+  5. `app/settings_dialog.py`「存储与配额」显示当前数据目录与「恢复默认数据目录」。
+  6. 自定义数据目录记录在 `HKCU\Software\NailongQuanxue\DataDirectory`，同时写入指针文件作为备份。
+- 验证（本机、离线、未调用付费 API）：
+  - 用不可写目录复现原缺陷：修改前界面显示「未保存: 13」；修改后显示
+    「无法写入配置文件 …\settings.json：Windows 拒绝访问 … 请把本程序加入安全软件的信任列表后重试。」
+  - 用可写临时目录验证保存成功：`settings.json` 中存的是 `dpapi:` 密文，不含明文 Key；
+    重新读取后协议/Base URL/模型 ID 一致，Key 能被当前 Windows 用户解密（`sk-roundtrip-secret-…` → 校验通过）。
+  - `pytest tests/test_storage.py -q` → 31 passed；`tests/test_windows.py -q` → 44 passed。
+### 2.0.1 追加：`--self-check` 写不进去时的处理
+
+- 观察：`NailongQuanxue.exe --self-check D:\NailongProbe\self.json` 曾直接抛出
+  `PermissionError: [Errno 13] Permission denied`，调用栈是 `main.write_self_check() -> Path.write_text()`。
+- 排查结论：
+  - `D:\NailongProbe` 的 ACL 对 `Authenticated Users` 是「修改」，路径本身可写；`D:` 为固定磁盘、有 150 GB 可用空间。
+  - 同一 EXE 换到不带中文的路径（`C:\NailongTest`、桌面下另一个纯英文目录）后，
+    通过计划任务以普通用户身份启动，写 `D:\NailongProbe\*.json` 与
+    `%LOCALAPPDATA%\NailongQuanxue\*.json` 均成功（`state=ok`，两个摄像头）。
+  - 在受限的调试沙箱里（工作目录内的 Python/EXE）任何用户目录写入都会得到 `EACCES`，
+    说明该报错是「运行环境/进程没有写权限」，不是 JSON 内容、路径长度或 Key 的问题。
+- 修复：
+  1. `--self-check` 的 `PATH` 变为可选；省略时写入
+     `%LOCALAPPDATA%\NailongQuanxue\diagnostics\self-check.json`（自动建目录）。
+  2. 目标是目录、父目录建不出来、写入被拒，都打印一句中文原因并以退出码 2 结束，
+     不再出现未处理的 Traceback；成功时打印实际写入路径。
+  3. 版本号统一为 `main.APP_VERSION`，自检 JSON 内 `version` 随之为 `2.0.1`。
+  4. `camera_access.Diagnosis.message()/title()` 补上 `OK` 分支，不再把「摄像头可用」写成「状态不明」。
+- 关于「未保存: 13」的独立结论（按实际调用栈核对，不因为错误码相同就合并）：
+  - 两条路径是**不同的代码位置**：自检失败在 `main.py` 的 `write_self_check()`；
+    AI 配置保存失败在 `config_store.py:252` 的 `temporary.write_text()`（写 `settings.json.tmp`）。
+  - 相同点只是异常类型：都是 `PermissionError(errno 13, 'Permission denied')`，即目标位置对当前进程不可写。
+  - 因此不是 API Key 校验、JSON 结构或 DPAPI 的问题；DPAPI 加解密另行验证通过（见上）。

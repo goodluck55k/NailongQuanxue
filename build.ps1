@@ -39,7 +39,7 @@ try {
     Set-Content -LiteralPath (Join-Path $bundlePath 'LOCAL-ONLY-NOT-PUBLISHED.txt') -Encoding ASCII -Value 'Local V2.0 candidate. Contains user-provided video/image. Redistribution and GitHub publication require separate approval.'
     & $Python tools/scan_public.py $bundlePath --allow-fixed-assets --report (Join-Path $workPath 'bundle-audit.json')
     Assert-ExitCode 'Local bundle data audit'
-    $zipPath = Join-Path $distPath 'NailongQuanxue-v2.0.0-Windows-local.zip'
+    $zipPath = Join-Path $distPath 'NailongQuanxue-v2.0.1-Windows-local.zip'
     Compress-Archive -LiteralPath $bundlePath -DestinationPath $zipPath -Force
     & $Python tools/scan_public.py $zipPath --allow-fixed-assets --report (Join-Path $workPath 'zip-audit.json')
     Assert-ExitCode 'Local ZIP data audit'

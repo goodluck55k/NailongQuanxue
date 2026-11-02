@@ -8,12 +8,13 @@ from shiboken6 import isValid
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect, QHBoxLayout,
                                QLabel, QMainWindow, QMessageBox, QPushButton, QSpinBox,
-                               QScrollArea, QVBoxLayout, QWidget)
+                               QFileDialog, QScrollArea, QVBoxLayout, QWidget)
 
 from .ai_config import migrate_plain_key, read_settings
 from .ai_panel import AiSetupDialog
 from .camera_recorder import CameraRecorder, cleanup_stale_clips
-from .config_store import ConfigStore, duration_from_parts
+from .config_store import (ConfigStore, duration_from_parts, relocate_data,
+                           remember_data_directory, writable)
 from .records_store import RecordsStore
 from .reminder_window import ReminderWindow
 from .resources import fallback_asset
@@ -184,8 +185,70 @@ class MainWindow(QMainWindow):
             cleanup_stale_clips()
         except Exception:
             pass  # Housekeeping must never prevent the window from opening.
+        self.data_writable, self.data_write_reason = writable(self.config.root)
         self.refresh_ai()
         QTimer.singleShot(0, self.maybe_prompt_ai)
+        QTimer.singleShot(0, self.warn_if_data_unwritable)
+
+    def warn_if_data_unwritable(self):
+        """数据目录不可写时先说清楚，否则用户会在保存配置时才撞上 errno 13。"""
+        if self._closing or self.data_writable:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("奶龙劝学 — 数据目录无法写入")
+        box.setText("这个文件夹无法写入，设置、照片、录像和档案都存不下来。")
+        box.setInformativeText(
+            self.data_write_reason + "\n\n"
+            "数据目录：" + str(self.config.root) + "\n\n"
+            "可以点“选择新的数据目录”把它换到一个能写的位置（例如 D:\\NailongData），"
+            "程序会把现有设置与档案复制过去；也可以把本程序加入安全软件的信任列表"
+            "（例如腾讯电脑管家、迈克菲的“文件夹保护/勒索防护”）后重试。")
+        move_button = box.addButton("选择新的数据目录", QMessageBox.ButtonRole.ActionRole)
+        open_button = box.addButton("打开数据目录", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("稍后再说", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is move_button:
+            self.choose_data_directory()
+        elif clicked is open_button:
+            self._open_folder(self.config.root)
+
+    def choose_data_directory(self):
+        """默认数据目录写不进去时，让用户换一个可写目录（记录在 HKCU，不动原文件）。"""
+        start = str(Path.home())
+        folder = QFileDialog.getExistingDirectory(self, "选择新的数据目录", start)
+        if not folder:
+            return
+        target = Path(folder) / "NailongQuanxue"
+        ok, reason = writable(target)
+        if not ok:
+            QMessageBox.warning(self, "这个目录也写不进去", reason)
+            return
+        if not remember_data_directory(target):
+            QMessageBox.warning(self, "无法记录新目录",
+                                "写入 HKCU\\Software\\NailongQuanxue 失败，"
+                                "请改为设置环境变量 NAILONG_DATA_DIR。")
+            return
+        copied, errors = relocate_data(self.config.root, target)
+        detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
+        if errors:
+            detail += "\n未能复制：" + "\n".join(errors[:3])
+        QMessageBox.information(
+            self, "数据目录已更改",
+            "新的数据目录：\n" + str(target) + "\n\n" + detail +
+            "\n\n原目录里的文件不会被删除。请重启程序后继续使用。")
+        self.quit_requested.emit()
+
+    @staticmethod
+    def _open_folder(folder):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def refresh_ai(self):
         try:

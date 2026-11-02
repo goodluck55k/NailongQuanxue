@@ -4,7 +4,9 @@ import sqlite3
 
 import pytest
 
-from app.config_store import ConfigStore, duration_from_parts
+from app import config_store
+from app.config_store import (ConfigStore, ConfigWriteError, duration_from_parts,
+                              relocate_data, writable)
 from app.photo_storage import PhotoStorage, WARNING_BYTES, local_directory
 from app.records_store import RecordsStore
 from app.supervision import Event
@@ -201,3 +203,53 @@ def test_video_directory_defaults_inside_data_directory(tmp_path):
     config = ConfigStore(tmp_path)
     assert config.values["video_directory"] == str(tmp_path / "videos")
     assert config.values["schema_version"] == 3
+
+
+def test_unwritable_config_reports_reason_not_errno(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path)
+
+    def refuse(self, *_args, **_kwargs):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "write_text", refuse)
+    with pytest.raises(ConfigWriteError) as caught:
+        store.save(minutes=10)
+    message = str(caught.value)
+    assert "拒绝访问" in message
+    assert "13" not in message
+    assert str(tmp_path / "settings.json") in message
+
+
+def test_writable_probe_detects_denied_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "write_text", lambda self, *a, **k: (_ for _ in ()).throw(
+        PermissionError(13, "Permission denied", str(self))))
+    ok, reason = writable(tmp_path)
+    assert ok is False and "拒绝访问" in reason
+
+
+def test_data_directory_pointer_roundtrip(tmp_path, monkeypatch):
+    pointer = tmp_path / "location.txt"
+    monkeypatch.setattr(config_store, "_pointer_files", lambda: [pointer])
+    monkeypatch.setattr(config_store, "_registry_data_directory", lambda: None)
+    monkeypatch.setattr(config_store, "_store_registry_data_directory", lambda folder: False)
+    monkeypatch.setattr(config_store, "_clear_registry_data_directory", lambda: False)
+    target = tmp_path / "custom"
+    assert config_store.remember_data_directory(target) is True
+    assert pointer.read_text(encoding="utf-8") == str(target)
+    assert config_store.remembered_data_directory() == target
+    assert config_store.forget_data_directory() is True
+    assert config_store.remembered_data_directory() is None
+
+
+def test_relocate_data_copies_without_deleting(tmp_path):
+    source = tmp_path / "old"
+    target = tmp_path / "new"
+    (source / "photos").mkdir(parents=True)
+    (source / "settings.json").write_text('{"minutes": 30}', encoding="utf-8")
+    (source / "records.sqlite3").write_bytes(b"sqlite")
+    (source / "photos" / "a.jpg").write_bytes(b"\xff\xd8\xff")
+    copied, errors = relocate_data(source, target)
+    assert errors == []
+    assert set(copied) == {"settings.json", "records.sqlite3", "photos/"}
+    assert (target / "photos" / "a.jpg").is_file()
+    assert (source / "settings.json").is_file()

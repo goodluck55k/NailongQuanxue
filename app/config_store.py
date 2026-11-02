@@ -1,12 +1,198 @@
 """Non-running preferences only. Never restore a timer, camera or overlay."""
+import errno
 import json
+import logging
 import os
+import time
 from pathlib import Path
+
+
+class ConfigWriteError(OSError):
+    """写入本地配置失败，带一条用户能看懂的中文说明。"""
+
+    def __init__(self, path, cause):
+        self.path = Path(path)
+        self.cause = cause
+        self.errno_value = getattr(cause, "errno", None)
+        super().__init__(getattr(cause, "errno", None), getattr(cause, "strerror", str(cause)))
+
+    def __str__(self):
+        return ("无法写入配置文件 %s：%s"
+                % (self.path, describe_os_error(self.cause, self.path)))
+
+
+def describe_os_error(error, path=None):
+    """把 OSError 翻成一句能指导操作的中文，绝不只显示错误码。"""
+    code = getattr(error, "errno", None)
+    where = ("（%s）" % path) if path else ""
+    if code in (errno.EACCES, errno.EPERM):
+        return ("Windows 拒绝访问%s。常见原因：安全软件（如腾讯电脑管家、迈克菲的"
+                "文件夹保护/勒索防护）拦截了本程序，或该文件夹的权限不允许当前用户写入。"
+                "请把本程序加入安全软件的信任列表后重试。" % where)
+    if code == errno.ENOSPC:
+        return "磁盘空间不足%s，请清理后重试。" % where
+    if code == errno.EROFS:
+        return "目标位置是只读的%s，请换一个可写目录。" % where
+    if code in (errno.ENOENT, errno.ENOTDIR):
+        return "路径不存在或不可用%s。" % where
+    if code == errno.EBUSY:
+        return "文件正被其他程序占用%s，请关闭后重试。" % where
+    message = getattr(error, "strerror", None) or str(error) or type(error).__name__
+    return "%s%s" % (message, where)
+
+
+def writable(folder):
+    """检查目录能否真正写入（读权限正常不代表能写）。"""
+    folder = Path(folder)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return False, describe_os_error(error, folder)
+    probe = folder / ".write-test"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True, ""
+    except OSError as error:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+        return False, describe_os_error(error, folder)
+
+
+_REGISTRY_PATH = r"Software\NailongQuanxue"
+
+
+def default_data_directory():
+    return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "NailongQuanxue"
+
+
+def _pointer_files():
+    """记录“数据目录被改到哪”的小文件；默认目录写不进去时也有备选落点。"""
+    import tempfile
+
+    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "NailongQuanxue"
+    roaming = Path(os.environ.get("APPDATA", str(Path.home()))) / "NailongQuanxue"
+    return [local / "location.txt", roaming / "location.txt",
+            Path(tempfile.gettempdir()) / "NailongQuanxue-location.txt"]
+
+
+def _registry_data_directory():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH) as key:
+            value, _kind = winreg.QueryValueEx(key, "DataDirectory")
+    except (ImportError, OSError):
+        return None
+    return Path(value) if isinstance(value, str) and value else None
+
+
+def _store_registry_data_directory(folder):
+    try:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH) as key:
+            winreg.SetValueEx(key, "DataDirectory", 0, winreg.REG_SZ, str(folder))
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+def _clear_registry_data_directory():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, "DataDirectory")
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+def remembered_data_directory():
+    """读取用户改过的数据目录：先看 HKCU，再看几个固定位置的指针文件。"""
+    registered = _registry_data_directory()
+    if registered is not None:
+        return registered
+    for pointer in _pointer_files():
+        try:
+            text = pointer.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text:
+            return Path(text)
+    return None
+
+
+def remember_data_directory(folder):
+    """把新数据目录写到注册表和指针文件（能写哪个写哪个）。"""
+    folder = Path(folder)
+    written = _store_registry_data_directory(folder)
+    for pointer in _pointer_files():
+        try:
+            pointer.parent.mkdir(parents=True, exist_ok=True)
+            pointer.write_text(str(folder), encoding="utf-8")
+            written = True
+        except OSError:
+            continue
+    return written
+
+
+def forget_data_directory():
+    removed = _clear_registry_data_directory()
+    for pointer in _pointer_files():
+        try:
+            pointer.unlink()
+            removed = True
+        except OSError:
+            continue
+    return removed
+
+
+def relocate_data(source, target):
+    """把已有设置、档案、照片和录像复制到新目录；只复制，不删除原文件。"""
+    import shutil
+
+    source, target = Path(source), Path(target)
+    copied, errors = [], []
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return copied, [describe_os_error(error, target)]
+    for name in ("settings.json", "pending-events.json"):
+        origin = source / name
+        if origin.is_file():
+            try:
+                shutil.copy2(origin, target / name)
+                copied.append(name)
+            except OSError as error:
+                errors.append(describe_os_error(error, origin))
+    for pattern in ("records.sqlite3", "records.sqlite3-wal", "records.sqlite3-shm"):
+        origin = source / pattern
+        if origin.is_file():
+            try:
+                shutil.copy2(origin, target / pattern)
+                copied.append(pattern)
+            except OSError as error:
+                errors.append(describe_os_error(error, origin))
+    for folder in ("photos", "videos"):
+        origin = source / folder
+        if origin.is_dir():
+            try:
+                shutil.copytree(origin, target / folder, dirs_exist_ok=True)
+                copied.append(folder + "/")
+            except OSError as error:
+                errors.append(describe_os_error(error, origin))
+    return copied, errors
 
 
 def data_directory():
     override = os.environ.get("NAILONG_DATA_DIR")
-    return Path(override) if override else Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "NailongQuanxue"
+    if override:
+        return Path(override)
+    remembered = remembered_data_directory()
+    if remembered is not None:
+        return remembered
+    return default_data_directory()
 
 
 def duration_from_parts(minutes, seconds):
@@ -59,7 +245,27 @@ class ConfigStore:
             if not backup.exists():
                 backup.write_bytes(self.path.read_bytes())
         temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8")
-        temporary.replace(self.path)
+        payload = json.dumps(values, ensure_ascii=False, indent=2)
+        last = None
+        for attempt in range(3):
+            try:
+                temporary.write_text(payload, encoding="utf-8")
+                temporary.replace(self.path)
+                last = None
+                break
+            except OSError as error:
+                # 安全软件扫描、另一个进程短暂占用都会造成瞬时 EACCES，重试即可。
+                last = error
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.12 * (attempt + 1))
+        if last is not None:
+            logging.getLogger("NailongQuanxue").error(
+                "Config save failed: %s", self.path, exc_info=last)
+            # 不要留下半成品；也不要在写失败时清空用户原有配置。
+            raise ConfigWriteError(self.path, last) from last
         self.values = values
         self.error = None
