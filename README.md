@@ -16,6 +16,19 @@
 
 ---
 
+## 下载 Windows 版
+
+### [⬇ 下载奶龙劝学 v2.0.1（Windows x64 免安装包）](https://github.com/goodluck55k/NailongQuanxue/releases/tag/v2.0.1)
+
+- 下载完整的 `NailongQuanxue-v2.0.1-Windows-x64.zip`（约 48 MB）。**不要单独下载 EXE**：程序依赖同一压缩包里的 `_internal` 与 `assets`，只拿一个 EXE 打不开。
+- 同一 Release 页面还提供 `NailongQuanxue-v2.0.1-Windows-x64.zip.sha256`，可以用 `certutil -hashfile .\NailongQuanxue-v2.0.1-Windows-x64.zip SHA256` 核对下载是否完整。
+- 解压到任意普通文件夹，双击 `NailongQuanxue\NailongQuanxue.exe` 即可运行。不需要安装 Python，也不需要管理员权限。
+- **首次启动**：未配置视觉 AI 时会弹出配置窗口，可以先点「稍后配置」——计时、五分钟休息、托盘和紧急退出都能立即使用，只有「提前投降」的动作核验需要 AI。
+- **第一次录制**：Windows 会询问是否允许本程序使用摄像头，选择允许即可。若提示没有可用摄像头，请到 设置 → 隐私和安全性 → 摄像头 中允许桌面程序访问，或运行包内 `tools` 说明中的自检脚本（见 [Windows 使用说明](README-Windows.md)）。
+- **关于签名**：压缩包里的 EXE **没有数字签名**，也不是安装程序。Windows SmartScreen 可能提示"未知发布者"，点击「更多信息 → 仍要运行」即可。本项目不提供已签名安装包，请不要把本程序当作经过签名的软件分发。
+
+---
+
 ## 认识你的桌面监督员
 
 打开奶龙劝学，设置分钟和秒钟，点击「开始计时」，就可以继续使用电脑。倒计时结束后，奶龙会登场，陪你完成 5 分钟的全屏休息。
@@ -109,7 +122,7 @@ V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图�
 
 ## 四步开始使用
 
-1. **获取程序：** 源码在本仓库；Windows 免安装包需要按 [Windows 使用说明](README-Windows.md) 在本地运行 `build.ps1` 打包（目前尚未发布 Release 附件）。
+1. **获取程序：** 到 [Releases 的 v2.0.1 页面](https://github.com/goodluck55k/NailongQuanxue/releases/tag/v2.0.1) 下载 `NailongQuanxue-v2.0.1-Windows-x64.zip`，解压整个文件夹。也可以克隆源码后按 [Windows 使用说明](README-Windows.md) 在本地运行 `build.ps1` 自行打包。
 
 2. **解压：** 解压整个文件夹，双击 `NailongQuanxue.exe`。不需要安装 Python，也不需要管理员权限。
 
@@ -149,10 +162,12 @@ V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图�
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q     # 自动化测试
-.\build.ps1                                    # 打包到 dist\v2.0-local（含审计与校验和）
+.\build.ps1                                    # 本地包：dist\v2.0.1-local（含审计、校验和）
+.\build.ps1 -Release                           # 发行包：NailongQuanxue-v2.0.1-Windows-x64.zip
 ```
 
-运行源码：`.\.venv\Scripts\python.exe main.py`；打包产物：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`。
+运行源码：`.\.venv\Scripts\python.exe main.py`；打包产物：`dist\v2.0.1-local\NailongQuanxue\NailongQuanxue.exe`。
+`-Release` 会去掉本地专用提示文件、强制检查包内不含任何用户数据，并生成与 Release 附件同名的 ZIP 和 `.sha256`；推送 `v*` 标签时 `.github/workflows/release.yml` 会在 Windows Runner 上重复同一套测试、打包、审计与校验，然后自动创建 Release。
 遇到配置存不下来时，`NailongQuanxue.exe --save-probe` 会分阶段报告是哪一步被拒绝，见
 [配置保存失败诊断](docs/配置保存失败诊断.md)。
 
