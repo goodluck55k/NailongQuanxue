@@ -1,7 +1,7 @@
 # 奶龙劝学 V2.0 Windows 使用说明
 
-1. 从本项目 v2.0.0 Release 下载 `NailongQuanxue-v2.0.1-Windows-local.zip` 和对应的 `.sha256` 文件（v2.0.0 目前只是本地构建，尚未上传 GitHub）。
-2. 在 PowerShell 执行 `Get-FileHash .\NailongQuanxue-v2.0.1-Windows-local.zip -Algorithm SHA256`，与校验文件比较。
+1. 目前尚未发布 Release 附件：请在本地运行 `build.ps1` 生成 `dist\v2.0-local\NailongQuanxue-v2.0.1-Windows-local.zip` 与同名 `.sha256` 文件（源码见 GitHub 仓库）。
+2. 在 PowerShell 执行 `Get-FileHash .\NailongQuanxue-v2.0.1-Windows-local.zip -Algorithm SHA256`，与同目录的 `.sha256` 文件比较。
 3. 完整解压 ZIP，进入 `NailongQuanxue` 目录，双击 `NailongQuanxue.exe`。保留 `_internal`、许可与说明文件。无需安装 Python 或请求管理员权限。
 4. 首次启动会弹出视觉 AI 配置窗口。可以点「稍后配置」先只是计时；但**不配置就无法通过动作挑战**。配置项：接口协议（OpenAI 兼容 / Anthropic / Gemini）、Base URL、API Key、模型 ID。
 5. 设置分钟和秒钟，点「开始计时」。使用计时结束后进入五分钟全屏休息；主屏静音循环视频，副屏纯白。

@@ -6,7 +6,7 @@
 
 **你可以继续玩，但时间到了，奶龙真的会来！**
 
-适用平台： <strong>Windows 10 / 11（64 位）</strong>　·　当前版本： <strong>v2.0.1（本地构建，未发布）</strong>　·　本地运行，无需注册
+适用平台： <strong>Windows 10 / 11（64 位）</strong>　·　当前版本： <strong>v2.0.1</strong>　·　本地运行，无需注册
 
 </div>
 
@@ -97,7 +97,7 @@
 
 ## 先配置视觉 AI
 
-V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图像输入**的接口：
+V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图像输入**的接口，同时电脑上要有可用的摄像头：
 
 - **接口协议：** OpenAI 兼容（`/chat/completions`）、Anthropic Messages（`/v1/messages`）、Google Gemini（`generateContent`）。
 - **Base URL / API Key / 模型 ID：** 全部由你填写，只保存在本机 `settings.json`。
@@ -109,13 +109,14 @@ V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图�
 
 ## 四步开始使用
 
-1. **下载：** 从 Releases 获取 Windows 完整 ZIP 包（v2.0.0 目前只有本地构建，未上传）。
+1. **获取程序：** 源码在本仓库；Windows 免安装包需要按 [Windows 使用说明](README-Windows.md) 在本地运行 `build.ps1` 打包（目前尚未发布 Release 附件）。
 
 2. **解压：** 解压整个文件夹，双击 `NailongQuanxue.exe`。不需要安装 Python，也不需要管理员权限。
 
 3. **计时：** 设置使用时长，点击「开始计时」。软件最小化后仍可继续监督。
 
 4. **休息：** 时间一到，和奶龙一起休息五分钟。休息结束后自动返回桌面；自动循环模式下会继续下一轮。
+   关闭窗口会缩到系统托盘，托盘菜单里也能开始计时、停止计时或紧急退出；历史投降记录在「设置 → 投降档案馆」里查看。
 
 更详细的安装步骤参见 [Windows 使用说明](README-Windows.md)。
 
@@ -125,7 +126,7 @@ V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图�
 
 - **只有你配置的 AI 会收到画面。** 动作核验时，从录像里取的 10 张静止画面会发送到你填写的 Base URL。除此之外没有任何上传；不发送音频，也不录麦克风。
 
-- **摄像头由你主动开启。** 只有进入「录制」那一步才会启动相机；录像结束即关闭。示范视频本身静音播放。
+- **摄像头由你主动开启。** 只有进入「录制」那一步才会启动相机；录像结束即关闭，不录麦克风、不提取音频。示范视频本身静音播放。
 - **Windows 摄像头权限。** 部分电脑（含本项目的开发机）会按"程序路径"单独授权摄像头。如果提示没有可用摄像头，去 设置 → 隐私和安全性 → 摄像头 里允许本程序访问即可；`tools\camera_check.ps1` 可以一键查看授权状态并做自检。
 
 - **文件可管理。** 投降录像有 512 MiB 的应用管理额度，照片有 100 MiB；两者都可以在设置里查看、删除，目录也可以更换。
@@ -140,7 +141,22 @@ V2.0 不再内置任何模型，动作核验需要你自己接一个**支持图�
 
 **技术栈：** Python 3.11 · PySide6 · SQLite · PyInstaller（视觉接口用标准库 `urllib` 直连，不引入新依赖）
 
-奶龙劝学在 Windows 本地运行，没有自家后端；唯一的外部请求来自你配置的视觉接口。开发者可查看以下文档：
+奶龙劝学在 Windows 本地运行，没有自家后端；唯一的外部请求来自你配置的视觉接口。
+
+**本地运行与构建：**
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q     # 自动化测试
+.\build.ps1                                    # 打包到 dist\v2.0-local（含审计与校验和）
+```
+
+运行源码：`.\.venv\Scripts\python.exe main.py`；打包产物：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`。
+遇到配置存不下来时，`NailongQuanxue.exe --save-probe` 会分阶段报告是哪一步被拒绝，见
+[配置保存失败诊断](docs/配置保存失败诊断.md)。
+
+开发者可查看以下文档：
 
 - [Windows 使用说明](README-Windows.md)
 - [摄像头与录像验证报告](docs/P1-摄像头与录像验证报告.md)（本机实测 7/7 通过）
