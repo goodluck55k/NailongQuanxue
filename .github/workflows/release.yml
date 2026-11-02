@@ -45,7 +45,7 @@ jobs:
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $tag = '${{ inputs.tag }}'.Trim()
           } else {
-            $tag = '$env:GITHUB_REF_NAME'.Trim()
+            $tag = "$env:GITHUB_REF_NAME".Trim()
           }
           if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Not a release tag: '$tag'" }
           "tag=$tag" >> $env:GITHUB_OUTPUT
