@@ -139,6 +139,33 @@ def _clear_registry_data_directory():
 
 def remembered_data_directory():
     """读取用户改过的数据目录：先看 HKCU，再看几个固定位置的指针文件。"""
+    # V2 registry value is authoritative, including an empty reset marker.
+    # If absent, preserve compatibility with the prior pointer precedence.
+    try:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH) as key:
+                value, _kind = winreg.QueryValueEx(key, "DataDirectoryV2")
+        except FileNotFoundError:
+            pass
+        else:
+            return Path(value) if isinstance(value, str) and value else None
+    except ImportError:
+        pass
+    except OSError:
+        # An inaccessible authority must not resurrect an obsolete pointer.
+        return None
+    for key in ("LOCALAPPDATA", "APPDATA"):
+        base = os.environ.get(key)
+        if base:
+            pointer = Path(base) / "NailongQuanxue" / "location.txt"
+            try:
+                text = pointer.read_text(encoding="utf-8").strip()
+                if text:
+                    return Path(text)
+            except OSError:
+                pass
+            break
     try:
         registered = _registry_data_directory()
     except Exception:
@@ -165,66 +192,153 @@ def remembered_data_directory():
     return None
 
 
+def _write_authoritative_directory(value):
+    try:
+        import winreg
+    except ImportError as error:
+        raise OSError("无法使用 Windows 用户注册表保存数据目录") from error
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _REGISTRY_PATH) as key:
+        winreg.SetValueEx(key, "DataDirectoryV2", 0, winreg.REG_SZ, value)
+
+
 def remember_data_directory(folder):
-    """把新数据目录写到注册表和指针文件（能写哪个写哪个）。"""
-    folder = Path(folder)
-    written = _store_registry_data_directory(folder)
-    for pointer in _pointer_files():
-        try:
-            pointer.parent.mkdir(parents=True, exist_ok=True)
-            pointer.write_text(str(folder), encoding="utf-8")
-            written = True
-        except OSError:
-            continue
-    return written
+    """Commit a single HKCU value without depending on the old data directory."""
+    _write_authoritative_directory(str(Path(folder)))
+    return True
 
 
 def forget_data_directory():
-    removed = _clear_registry_data_directory()
-    for pointer in _pointer_files():
-        try:
-            pointer.unlink()
-            removed = True
-        except OSError:
-            continue
-    return removed
+    # An empty authoritative value suppresses all legacy records, even when
+    # their locations are read-only and cannot be removed.
+    _write_authoritative_directory("")
+    return True
+
+
+def preserve_uncommitted_migration(target):
+    """Move a completed but unselected copy aside so migration can be retried."""
+    import tempfile
+
+    target = Path(target)
+    recovery = Path(tempfile.mkdtemp(prefix=".nailong-recovery-", dir=target.parent))
+    try:
+        target.rename(recovery / target.name)
+    except OSError:
+        recovery.rmdir()
+        raise
+    return recovery / target.name
 
 
 def relocate_data(source, target):
-    """把已有设置、档案、照片和录像复制到新目录；只复制，不删除原文件。"""
+    """Copy a consistent data snapshot without overwriting existing files."""
     import shutil
+    import sqlite3
+    import tempfile
+    from contextlib import closing
 
-    source, target = Path(source), Path(target)
-    copied, errors = [], []
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        return copied, [describe_os_error(error, target)]
-    for name in ("settings.json", "pending-events.json"):
-        origin = source / name
-        if origin.is_file():
-            try:
-                shutil.copy2(origin, target / name)
-                copied.append(name)
-            except OSError as error:
-                errors.append(describe_os_error(error, origin))
-    for pattern in ("records.sqlite3", "records.sqlite3-wal", "records.sqlite3-shm"):
-        origin = source / pattern
-        if origin.is_file():
-            try:
-                shutil.copy2(origin, target / pattern)
-                copied.append(pattern)
-            except OSError as error:
-                errors.append(describe_os_error(error, origin))
-    for folder in ("photos", "videos"):
-        origin = source / folder
+    source, target = Path(source).resolve(), Path(target).resolve()
+    copied = []
+    stage = None
+
+    def relative_internal(value):
+        if not isinstance(value, str) or not value:
+            return None
+        path = Path(value)
+        if not path.is_absolute():
+            return None
+        try:
+            return path.resolve().relative_to(source)
+        except ValueError:
+            return None
+
+    def copy_path(relative):
+        origin, destination = source / relative, stage / relative
+        if not origin.exists():
+            return
+        if destination.exists():
+            raise FileExistsError("目标位置已有数据，未覆盖：%s" % destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
         if origin.is_dir():
+            shutil.copytree(origin, destination)
+        else:
+            with origin.open("rb") as src, destination.open("xb") as dst:
+                shutil.copyfileobj(src, dst)
+            shutil.copystat(origin, destination)
+        copied.append(str(relative))
+
+    try:
+        if source == target or source in target.parents or target in source.parents:
+            raise ValueError("新旧数据目录不能相同或互相包含")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            raise FileExistsError("目标目录已有数据，未覆盖：%s" % target)
+        stage = Path(tempfile.mkdtemp(prefix=".nailong-migration-", dir=target.parent))
+        settings_path = source / "settings.json"
+        settings = None
+        media_dirs = {Path("photos"), Path("videos")}
+        if settings_path.is_file():
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            for key in ("photo_directory", "video_directory"):
+                relative = relative_internal(settings.get(key))
+                if relative is not None:
+                    if relative == Path('.'):
+                        raise ValueError("媒体目录不能是数据目录本身")
+                    media_dirs.add(relative)
+                    settings[key] = str(target / relative)
+        for name in ("settings.json", "pending-events.json", "records.sqlite3",
+                     "records.sqlite3-wal", "records.sqlite3-shm"):
+            if (stage / name).exists():
+                raise FileExistsError("目标位置已有数据，未覆盖：%s" % (stage / name))
+        # Copy parent directories first, then skip paths already included in them.
+        roots = []
+        copied_media = set()
+        for relative in sorted(media_dirs, key=lambda path: len(path.parts)):
+            if not any(parent == relative or parent in relative.parents for parent in roots):
+                copy_path(relative)
+                roots.append(relative)
+        if settings is not None:
+            with (stage / "settings.json").open("x", encoding="utf-8") as handle:
+                json.dump(settings, handle, ensure_ascii=False, indent=2)
+            copied.append("settings.json")
+        copy_path(Path("pending-events.json"))
+        database = source / "records.sqlite3"
+        if database.is_file():
+            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src:
+                with closing(sqlite3.connect(stage / "records.sqlite3")) as dst:
+                    src.backup(dst)
+                    columns = {row[1] for row in dst.execute("PRAGMA table_info(events)")}
+                    with dst:
+                        for column in ("photo_path", "video_path"):
+                            if column not in columns:
+                                continue
+                            rows = dst.execute(
+                                f"SELECT rowid, {column} FROM events WHERE {column} IS NOT NULL"
+                            ).fetchall()
+                            for rowid, value in rows:
+                                relative = relative_internal(value)
+                                if relative is None:
+                                    continue
+                                if (relative not in copied_media and
+                                        not any(root == relative or root in relative.parents for root in roots)):
+                                    copy_path(relative)
+                                    copied_media.add(relative)
+                                dst.execute(f"UPDATE events SET {column}=? WHERE rowid=?",
+                                            (str(target / relative), rowid))
+            copied.append("records.sqlite3")
+        # Removing an empty destination cannot discard user data. Rename the
+        # complete sibling snapshot only after all copying and updates succeed.
+        if target.exists():
+            target.rmdir()
+        stage.rename(target)
+        stage = None
+    except (OSError, ValueError, TypeError, sqlite3.Error, shutil.Error) as error:
+        errors = [str(error)]
+        if stage is not None:
             try:
-                shutil.copytree(origin, target / folder, dirs_exist_ok=True)
-                copied.append(folder + "/")
-            except OSError as error:
-                errors.append(describe_os_error(error, origin))
-    return copied, errors
+                shutil.rmtree(stage)
+            except OSError as cleanup_error:
+                errors.append("无法清理临时目录 %s：%s" % (stage, cleanup_error))
+        return [], errors
+    return copied, []
 
 
 def staged_write(target, payload):

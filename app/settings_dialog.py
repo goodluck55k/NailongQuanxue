@@ -107,12 +107,13 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "设置未保存", "无法写入本地配置，原设置未修改。")
 
     def reset_data_directory(self):
-        if forget_data_directory():
-            QMessageBox.information(self, "已恢复默认数据目录",
-                                    "重启程序后会重新使用默认目录。\n原目录与新目录里的文件都不会被删除。")
-        else:
-            QMessageBox.information(self, "当前就是默认数据目录",
-                                    "没有找到自定义数据目录的记录。")
+        try:
+            forget_data_directory()
+        except OSError as error:
+            QMessageBox.warning(self, "无法恢复默认数据目录", "目录设置未更改：\n" + str(error))
+            return
+        QMessageBox.information(self, "已恢复默认数据目录",
+                                "重启程序后会重新使用默认目录。\n原目录与新目录里的文件都不会被删除。")
 
     def update_data_directory(self):
         remembered = remembered_data_directory()

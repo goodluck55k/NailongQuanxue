@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect, 
 from .ai_config import migrate_plain_key, read_settings
 from .ai_panel import AiSetupDialog
 from .camera_recorder import CameraRecorder, cleanup_stale_clips
-from .config_store import (ConfigStore, data_directory, duration_from_parts, relocate_data,
+from .config_store import (ConfigStore, data_directory, duration_from_parts, preserve_uncommitted_migration, relocate_data,
                            remember_data_directory, writable)
 from .records_store import RecordsStore
 from .reminder_window import ReminderWindow
@@ -253,19 +253,23 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         target = Path(folder) / "NailongQuanxue"
-        ok, reason = writable(target)
-        if not ok:
-            QMessageBox.warning(self, "这个目录也写不进去", reason)
-            return
-        if not remember_data_directory(target):
-            QMessageBox.warning(self, "无法记录新目录",
-                                "写入 HKCU\\Software\\NailongQuanxue 失败，"
-                                "请改为设置环境变量 NAILONG_DATA_DIR。")
-            return
         copied, errors = relocate_data(self.config.root, target)
-        detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
         if errors:
-            detail += "\n未能复制：" + "\n".join(errors[:3])
+            QMessageBox.warning(self, "数据迁移失败", "数据目录未更改：\n" + "\n".join(errors))
+            return
+        try:
+            remember_data_directory(target)
+        except OSError as error:
+            try:
+                recovery = preserve_uncommitted_migration(target)
+                recovery_detail = "已将复制的数据移至 %s，可重新选择目标目录重试。" % recovery
+            except OSError as recovery_error:
+                recovery_detail = ("无法自动移开复制的数据：%s\n请将 %s 移到其他位置后重试。"
+                                   % (recovery_error, target))
+            QMessageBox.warning(self, "无法记录新目录",
+                                "数据目录未更改：\n%s\n%s" % (error, recovery_detail))
+            return
+        detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
         self.banner_text.setText(
             "已把数据目录改为：" + str(target) + "\n" + detail +
             "\n原目录里的文件不会被删除。重启程序后生效。")
