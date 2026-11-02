@@ -43,15 +43,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Release -SkipTe
 # Version: 2.0.1 ... RELEASE PACKAGE (ready for GitHub Release)
 ```
 
-| 项目 | 结果 |
-|---|---|
-| ZIP | `dist\v2.0.1-release\NailongQuanxue-v2.0.1-Windows-x64.zip`，48,537,504 B |
-| SHA-256 | `e3df589545858c19ea94961c62ed1ed9ff9f2203e6c6027bd08ce24737aaccd1e`（写入同名 `.sha256`） |
-| 校验文件 | `NailongQuanxue-v2.0.1-Windows-x64.zip.sha256`（105 B，格式 `<hash>  <文件名>`） |
+| 项目 | 本地复核构建 | GitHub Release 实际附件 |
+|---|---|---|
+| ZIP | `dist\v2.0.1-release\NailongQuanxue-v2.0.1-Windows-x64.zip`，48,537,504 B | `NailongQuanxue-v2.0.1-Windows-x64.zip`，52,701,781 B |
+| SHA-256 | `e3df589545858c19ea94961c62ed1ed9ff9f2203e6c6027bd08ce24737aaccd1e` | `2dbd047a9170f79839766c8ecf5ef329084ef8425b1525f8d6546d684ad154ab` |
+| 校验文件 | 同名 `.sha256`（105 B，格式 `<hash>  <文件名>`） | `NailongQuanxue-v2.0.1-Windows-x64.zip.sha256`，105 B |
 | 包内结构 | 459 个条目；`NailongQuanxue.exe` 2,202,327 B；`_internal\` 237 个文件；`assets\default_break.mp4`、`assets\fallback_overlay.jpg` 位于 `_internal\assets\` |
 | 审计 | bundle 与 ZIP 均 PASS；包内没有 `settings.json`、`.sqlite3`、日志、照片、录像、`NailongData`，也没有本地专用提示文件 |
 
-ZIP 内容由 `tools/verify_bundle.py` 独立校验（`ok: true`）：必需文件齐全、单一顶层目录、无路径穿越、无个人数据、`_internal` 文件数达标、哈希与 `.sha256` 一致。
+两份产物都由同一套脚本生成：本地 2.0.1 复核构建（上表左列）与工作流在 `windows-latest` 上重建的附件（右列）。体积差异来自 Runner 上 PySide6/PyInstaller 打包内容的差别，两者结构均通过校验。ZIP 内容由 `tools/verify_bundle.py` 独立校验（`ok: true`）：必需文件齐全、单一顶层目录、无路径穿越、无个人数据、`_internal` 文件数达标、哈希与 `.sha256` 一致。
 
 ### 5. 解压后的真实 EXE
 
