@@ -3,7 +3,7 @@
 ## 一、下载与校验
 
 1. 打开 Release 页面：<https://github.com/goodluck55k/NailongQuanxue/releases/tag/v2.0.1>
-2. 下载完整压缩包 `NailongQuanxue-v2.0.1-Windows-x64.zip`（约 48 MB）。**不要单独下载 EXE**——程序还需要同目录的 `_internal` 与 `assets`，缺少它们无法启动。
+2. 下载完整压缩包 `NailongQuanxue-v2.0.1-Windows-x64.zip`（约 48 MB）。**不要单独下载 EXE**——程序还需要同目录的 `_internal`（资源位于 `_internal/assets/`），缺少它们无法启动。
 3. 同页下载 `NailongQuanxue-v2.0.1-Windows-x64.zip.sha256`，然后在 PowerShell 中执行：
 
 ```powershell
@@ -15,7 +15,7 @@ Get-Content .\NailongQuanxue-v2.0.1-Windows-x64.zip.sha256
 
 ## 二、解压与启动
 
-4. 完整解压 ZIP，进入 `NailongQuanxue` 目录，双击 `NailongQuanxue.exe`。保留 `_internal`、`assets`、许可与说明文件；不要只把 EXE 拖到别处。
+4. 完整解压 ZIP，进入 `NailongQuanxue` 目录，双击 `NailongQuanxue.exe`。保留 `_internal`（含 `assets`）、许可与说明文件；不要只把 EXE 拖到别处。
 5. 无需安装 Python，也不需要管理员权限。EXE **没有数字签名**，也不是安装程序；SmartScreen 提示"未知发布者"时选择「更多信息 → 仍要运行」。
 6. 首次启动会弹出视觉 AI 配置窗口，可以先点「稍后配置」——计时与五分钟休息不需要 AI。但**不配置就无法通过动作挑战**。配置项：接口协议（OpenAI 兼容 / Anthropic / Gemini）、Base URL、API Key、模型 ID。
 7. 设置分钟和秒钟，点「开始计时」。计时结束后进入五分钟全屏休息：主屏静音循环视频，副屏纯白。
@@ -27,8 +27,8 @@ Get-Content .\NailongQuanxue-v2.0.1-Windows-x64.zip.sha256
 部分电脑（包括本项目的开发机）会按**程序路径**单独授予摄像头权限，因此可能出现"系统设置里摄像头是开的，程序却提示没有可用摄像头"。处理方式：
 
 1. 打开 设置 → 隐私和安全性 → 摄像头，确认「让桌面应用访问你的相机」为开启状态；
-2. 在同一个页面里找到本程序并允许；如果列表里没有，先运行一次程序触发授权记录；
-3. 若仍失败，可在源码目录运行 `tools\camera_check.ps1`（会打印设备、隐私键、已授权程序与 FrameServer 状态，并用本机 Python 直接做一次无声录像自检）；加 `-OpenSettings` 可直接跳到摄像头隐私页。
+2. 检查该页面的应用访问设置，并在需要时手动开启桌面应用访问权限；
+3. 源码开发者若仍需诊断，可在源码目录运行 `tools\camera_check.ps1`（会打印设备、隐私键、已授权程序与 FrameServer 状态，并用本机 Python 直接做一次无声录像自检）；加 `-OpenSettings` 可直接跳到摄像头隐私页；Windows 发行包不包含此脚本。
 
 摄像头只在进入「录制」那一步开启，录像结束即关闭，不录麦克风、不提取音频；取消会删除临时录像，也不会写入档案。无声录像已在本机实测通过（`docs\P1-摄像头与录像验证报告.md`）。
 

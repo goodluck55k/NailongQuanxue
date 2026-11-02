@@ -253,19 +253,16 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         target = Path(folder) / "NailongQuanxue"
-        ok, reason = writable(target)
-        if not ok:
-            QMessageBox.warning(self, "这个目录也写不进去", reason)
-            return
-        if not remember_data_directory(target):
-            QMessageBox.warning(self, "无法记录新目录",
-                                "写入 HKCU\\Software\\NailongQuanxue 失败，"
-                                "请改为设置环境变量 NAILONG_DATA_DIR。")
-            return
         copied, errors = relocate_data(self.config.root, target)
-        detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
         if errors:
-            detail += "\n未能复制：" + "\n".join(errors[:3])
+            QMessageBox.warning(self, "数据迁移失败", "数据目录未更改：\n" + "\n".join(errors))
+            return
+        try:
+            remember_data_directory(target)
+        except OSError as error:
+            QMessageBox.warning(self, "无法记录新目录", "数据目录未更改：\n" + str(error))
+            return
+        detail = ("已复制：" + "、".join(copied)) if copied else "旧目录没有可复制的数据。"
         self.banner_text.setText(
             "已把数据目录改为：" + str(target) + "\n" + detail +
             "\n原目录里的文件不会被删除。重启程序后生效。")
