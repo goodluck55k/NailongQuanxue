@@ -262,7 +262,10 @@ tools/gui_smoke.py
 tools/prepare_sources.py
 tools/prepare_release.py
 tools/prune_bundle.py
+tools/read_version.py
 tools/real_duration_check.py
 tools/scan_public.py
 tools/ui_responsiveness.py
 tools/v2_smoke.py
+tools/verify_bundle.py
+.github/workflows/release.yml
