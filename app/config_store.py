@@ -69,13 +69,36 @@ def default_data_directory():
 
 
 def _pointer_files():
-    """记录“数据目录被改到哪”的小文件；默认目录写不进去时也有备选落点。"""
-    import tempfile
+    """记住“数据目录改到哪”的指针文件。
 
-    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "NailongQuanxue"
-    roaming = Path(os.environ.get("APPDATA", str(Path.home()))) / "NailongQuanxue"
-    return [local / "location.txt", roaming / "location.txt",
-            Path(tempfile.gettempdir()) / "NailongQuanxue-location.txt"]
+    只用当前用户的应用数据目录这类持久位置：旧版曾把指针写进临时目录，
+    而临时目录可能被清理、被策略禁用，甚至 ``tempfile.gettempdir()`` 本身
+    就会抛 FileNotFoundError；这里只在旧指针确实存在时才把它当成只读兼容项。
+    """
+    files = []
+    for key in ("LOCALAPPDATA", "APPDATA"):
+        base = os.environ.get(key)
+        if base:
+            files.append(Path(base) / "NailongQuanxue" / "location.txt")
+    legacy = _legacy_temp_pointer()
+    if legacy is not None:
+        files.append(legacy)
+    return files
+
+
+def _legacy_temp_pointer():
+    """旧版放在 %TEMP% 的指针文件；环境变量缺失或目录不可用就跳过。"""
+    for key in ("TEMP", "TMP"):
+        base = os.environ.get(key)
+        if not base:
+            continue
+        try:
+            folder = Path(base)
+            if folder.is_dir():
+                return folder / "NailongQuanxue-location.txt"
+        except OSError:
+            continue
+    return None
 
 
 def _registry_data_directory():
@@ -110,16 +133,29 @@ def _clear_registry_data_directory():
 
 def remembered_data_directory():
     """读取用户改过的数据目录：先看 HKCU，再看几个固定位置的指针文件。"""
-    registered = _registry_data_directory()
+    try:
+        registered = _registry_data_directory()
+    except Exception:
+        registered = None
     if registered is not None:
         return registered
-    for pointer in _pointer_files():
+    try:
+        pointers = _pointer_files()
+    except Exception:
+        return None
+    for pointer in pointers:
         try:
             text = pointer.read_text(encoding="utf-8").strip()
         except OSError:
             continue
-        if text:
-            return Path(text)
+        if not text:
+            continue
+        try:
+            candidate = Path(text)
+        except (OSError, ValueError):
+            continue
+        if str(candidate).strip():
+            return candidate
     return None
 
 
@@ -186,13 +222,23 @@ def relocate_data(source, target):
 
 
 def data_directory():
+    """解析数据目录。任何一步失败都不能让程序启动崩溃。"""
     override = os.environ.get("NAILONG_DATA_DIR")
     if override:
-        return Path(override)
-    remembered = remembered_data_directory()
+        try:
+            return Path(override)
+        except (OSError, ValueError):
+            pass
+    try:
+        remembered = remembered_data_directory()
+    except Exception:  # 指针文件、注册表都可能因为策略或权限不可用
+        remembered = None
     if remembered is not None:
         return remembered
-    return default_data_directory()
+    try:
+        return default_data_directory()
+    except (OSError, ValueError):
+        return Path(os.environ.get("USERPROFILE") or os.path.expanduser("~")) / "NailongQuanxue"
 
 
 def duration_from_parts(minutes, seconds):
@@ -207,15 +253,46 @@ def duration_from_parts(minutes, seconds):
 
 class ConfigStore:
     def __init__(self, root=None):
-        self.root = Path(root) if root is not None else data_directory()
+        self.root = self._resolve_root(root)
         self.path = self.root / "settings.json"
         self.values = {"minutes": 30, "seconds": 0, "mode": "manual",
                        "photo_directory": str(self.root / "photos"),
                        "video_directory": str(self.root / "videos"), "schema_version": 3}
         self.error = None
+        try:
+            self._load()
+        except (OSError, ValueError, KeyError, TypeError):
+            self.error = "配置无法读取，已安全进入待机；原配置文件保留。"
+
+    @staticmethod
+    def _resolve_root(root):
+        """解析根目录时任何失败都要能退回默认值，不能让启动崩掉。"""
+        if root is not None:
+            try:
+                return Path(root)
+            except (OSError, ValueError):
+                pass
+        try:
+            return Path(data_directory())
+        except Exception:
+            pass
+        try:
+            return default_data_directory()
+        except (OSError, ValueError):
+            return Path(os.path.expanduser("~")) / "NailongQuanxue"
+
+    def _load(self):
         source = self.path
-        legacy = self.root.parent / "ScreenBreak" / "settings.json"
-        if not source.exists() and legacy.exists():
+        try:
+            legacy = self.root.parent / "ScreenBreak" / "settings.json"
+            has_legacy = legacy.exists()
+        except OSError:
+            has_legacy = False
+        try:
+            has_source = source.exists()
+        except OSError:
+            has_source = False
+        if not has_source and has_legacy:
             source = legacy
         if source.exists():
             try:

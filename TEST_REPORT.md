@@ -189,3 +189,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
     AI 配置保存失败在 `config_store.py:252` 的 `temporary.write_text()`（写 `settings.json.tmp`）。
   - 相同点只是异常类型：都是 `PermissionError(errno 13, 'Permission denied')`，即目标位置对当前进程不可写。
   - 因此不是 API Key 校验、JSON 结构或 DPAPI 的问题；DPAPI 加解密另行验证通过（见上）。
+### 2.0.1 追加：启动不再依赖临时目录
+
+- 现象（用户现场）：EXE 启动即崩，栈为
+  `main_window.__init__ → ConfigStore.__init__ → data_directory() → remembered_data_directory() → _pointer_files() → tempfile.gettempdir() → FileNotFoundError: No usable temporary directory found`。
+- 根因：上一版为了"默认目录写不进去也有落点"，把 `%TEMP%\NailongQuanxue-location.txt` 放进了指针文件列表，
+  而 `tempfile.gettempdir()` 在 TEMP/TMP 缺失、无权限或全部候选都不可用时**会抛异常**；
+  这个调用发生在启动链路上，于是整窗初始化失败。
+- 修复：
+  1. `_pointer_files()` 不再调用 `tempfile`：只用 `%LOCALAPPDATA%\NailongQuanxue\location.txt`
+     与 `%APPDATA%\NailongQuanxue\location.txt`；旧版放在 `%TEMP%` 的指针仅作**只读兼容**，
+     用 `os.environ["TEMP"/"TMP"] + Path.is_dir()` 判断，取不到就跳过。
+  2. `remembered_data_directory()` / `data_directory()` / `ConfigStore._resolve_root()` 三层兜底，
+     任何一步抛 `OSError` 都退回默认目录，绝不让异常冒到主窗口。
+  3. `ConfigStore.__init__` 把读配置的细节抽到 `_load()`，整体再包一层，读失败只置 `config.error`。
+  4. `camera_recorder.clip_directory()` 不再用 `tempfile`：TEMP/TMP 目录存在且可写才用，
+     否则退到 `<数据目录>\clips`；建目录失败也不抛异常，由录制流程给出提示。
+  5. `MainWindow` 读 `pending-events.json` 的 `exists()` 也加了 `OSError` 保护。
+- 验证（模拟"临时目录不可用"）：
+  - TEMP/TMP 指向不存在的目录：`data_directory()` = 默认目录、`ConfigStore` 正常读到原 `settings.json`
+    （minutes=0/seconds=8）、`clip_directory()` 退到 `<数据目录>\clips`。
+  - 把 `tempfile.gettempdir` 替换成直接抛 `FileNotFoundError`：同样不崩溃。
+  - 旧版临时目录指针仍被正确读取（兼容）。
+  - `pytest tests/test_config_paths.py tests/test_storage.py tests/test_self_check.py tests/test_windows.py -q` → 86 passed。

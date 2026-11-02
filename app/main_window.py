@@ -51,8 +51,12 @@ class MainWindow(QMainWindow):
                 self.records = RecordsStore(self.config.root / "records.sqlite3")
             except (OSError, sqlite3.Error):
                 self._data_error = "档案无法打开，原数据库保留。请检查本地数据目录；紧急退出仍可用。"
-        pending = self.config.root / "pending-events.json"
-        if pending.exists():
+        try:
+            pending = self.config.root / "pending-events.json"
+            has_pending = pending.exists()
+        except OSError:
+            pending, has_pending = None, False
+        if has_pending:
             try:
                 self.pending_events = [Event(**value) for value in json.loads(pending.read_text(encoding="utf-8"))]
             except (OSError, ValueError, TypeError):

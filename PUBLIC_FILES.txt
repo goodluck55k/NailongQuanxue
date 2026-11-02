@@ -241,6 +241,7 @@ tests/test_ai_config.py
 tests/test_assets.py
 tests/test_camera_access.py
 tests/test_camera_recorder.py
+tests/test_config_paths.py
 tests/test_frame_sampler.py
 tests/test_public_audit.py
 tests/test_self_check.py

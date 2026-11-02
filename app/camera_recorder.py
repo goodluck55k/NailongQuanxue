@@ -5,7 +5,7 @@ microphone source. The finished file is a temporary clip: it is handed to the
 archive only after the user confirms a verified challenge, and it is deleted
 when the dialog closes.
 """
-import tempfile
+import os
 import time
 import uuid
 from pathlib import Path
@@ -25,10 +25,42 @@ TICK_MS = 100
 MIN_FRAMES = 6
 
 
+def _writable_base(folder):
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / ".write-test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def clip_directory():
-    folder = Path(tempfile.gettempdir()) / "NailongQuanxue" / "clips"
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
+    """录制时的临时片段目录。
+
+    优先系统的 TEMP，但它可能缺失、被清理或被策略禁用（``tempfile.gettempdir()``
+    在这种机器上会直接抛 FileNotFoundError），所以退到数据目录里的 clips 子目录。
+    """
+    for key in ("TEMP", "TMP"):
+        base = os.environ.get(key)
+        if not base:
+            continue
+        try:
+            if not Path(base).is_dir():
+                continue
+            candidate = Path(base) / "NailongQuanxue" / "clips"
+        except (OSError, ValueError):
+            continue
+        if _writable_base(candidate):
+            return candidate
+    from .config_store import data_directory
+    fallback = data_directory() / "clips"
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass  # 目录不可建也要返回路径，由录制流程给出可读的失败提示
+    return fallback
 
 
 STALE_CLIP_SECONDS = 24 * 3600
