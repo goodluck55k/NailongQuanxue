@@ -32,6 +32,10 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $bundlePath -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assets\ASSET_MANIFEST.md') -Destination $bundlePath -Force
+    $docsPath = Join-Path $bundlePath 'docs'
+    New-Item -ItemType Directory -Force -Path $docsPath | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'docs') -Filter *.md -File |
+        Copy-Item -Destination $docsPath -Force
     Set-Content -LiteralPath (Join-Path $bundlePath 'LOCAL-ONLY-NOT-PUBLISHED.txt') -Encoding ASCII -Value 'Local V2.0 candidate. Contains user-provided video/image. Redistribution and GitHub publication require separate approval.'
     & $Python tools/scan_public.py $bundlePath --allow-fixed-assets --report (Join-Path $workPath 'bundle-audit.json')
     Assert-ExitCode 'Local bundle data audit'

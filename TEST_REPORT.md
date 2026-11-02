@@ -94,7 +94,7 @@ Windows x64（NT 10.0 build 26200），Python 3.11.5，PySide6 Essentials/Addons
 
 ```powershell
 .\.venv\Scripts\python.exe tools\exe_smoke.py 'dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe' --report build\exe-smoke-round2.json
-# result: PASS, 17.4 s
+# result: PASS, 17.5 s
 ```
 
 检查项：首次 AI 提醒出现并可关闭 → EXE 从其他工作目录启动并最小化 → 最小化状态下最后十秒提醒仍出现 → 归零后遮挡窗出现 → 覆盖窗「解除限制」打开投降书 → 投降书底部取消后休息继续、无残留窗口。**未在 EXE 上跑通完整动作挑战**（本机无摄像头）；测试结束时由工具终止其自身启动的进程，不记为"软件正常退出"。
@@ -126,8 +126,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -SkipTests
 # exit=0
 ```
 
-- 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 421 个文件，114,973,965 B）
-- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,248,221 B
+- 目录包：`dist\v2.0-local\NailongQuanxue\NailongQuanxue.exe`（bundle 423 个文件，114,984,758 B）
+- ZIP：`dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip`，48,254,541 B
 - SHA-256：随产物生成，见 `dist\v2.0-local\NailongQuanxue-v2.0.0-Windows-local.zip.sha256`（本机构建记录：`build\build-round3b.log`）
 - 审计：bundle 748 项 PASS、ZIP 749 项 PASS；包内只有 `assets/default_break.mp4` 与 `assets/fallback_overlay.jpg` 两个固定素材，**没有** `settings.json`、`.sqlite3`、日志或个人媒体。
 
