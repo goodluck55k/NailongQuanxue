@@ -148,8 +148,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = '${{ steps.tag.outputs.tag }}'
           gh release view $tag --json tagName 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; delete it manually if a republication is intended." }
+          $exists = ($LASTEXITCODE -eq 0)
+          if ($exists) { throw "Release $tag already exists; delete it manually if a republication is intended." }
           Write-Host "No existing release for $tag"
+          # gh returns 1 for "not found"; that is the expected path, so end the step cleanly.
+          exit 0
 
       - name: Publish release with assets
         shell: pwsh
