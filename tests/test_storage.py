@@ -205,18 +205,19 @@ def test_video_directory_defaults_inside_data_directory(tmp_path):
     assert config.values["schema_version"] == 3
 
 
-def test_unwritable_config_reports_reason_not_errno(tmp_path, monkeypatch):
+def test_unwritable_config_reports_stage_and_reason(tmp_path, monkeypatch):
     store = ConfigStore(tmp_path)
 
-    def refuse(self, *_args, **_kwargs):
-        raise PermissionError(13, "Permission denied", str(self))
+    def refuse(target, _payload):
+        error = PermissionError(13, "Permission denied", str(target))
+        return {"ensure_dir": "ok", "create": "PermissionError errno=13 winerror=None"}, error
 
-    monkeypatch.setattr(Path, "write_text", refuse)
+    monkeypatch.setattr(config_store, "staged_write", refuse)
     with pytest.raises(ConfigWriteError) as caught:
         store.save(minutes=10)
     message = str(caught.value)
     assert "拒绝访问" in message
-    assert "13" not in message
+    assert "失败阶段：create" in message
     assert str(tmp_path / "settings.json") in message
 
 

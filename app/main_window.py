@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect, 
 from .ai_config import migrate_plain_key, read_settings
 from .ai_panel import AiSetupDialog
 from .camera_recorder import CameraRecorder, cleanup_stale_clips
-from .config_store import (ConfigStore, duration_from_parts, relocate_data,
+from .config_store import (ConfigStore, data_directory, duration_from_parts, relocate_data,
                            remember_data_directory, writable)
 from .records_store import RecordsStore
 from .reminder_window import ReminderWindow
@@ -222,17 +222,26 @@ class MainWindow(QMainWindow):
         if not isValid(self) or self._closing:
             return
         try:
-            if self.data_writable:
+            switched = Path(self.config.root) != Path(data_directory())
+            if self.data_writable and not switched:
                 self.data_banner.hide()
                 return
         except RuntimeError:  # 窗口已经被销毁（例如测试里 deleteLater 之后）
             return
         try:
-            self.banner_text.setText(
-                "数据目录无法写入：" + str(self.config.root) + "\n"
-                + self.data_write_reason + "\n"
-                "设置、照片、录像和档案都可能存不下来。可以把数据目录换到别处"
-                "（例如 D:\\NailongData，程序会复制现有数据），或把本程序加入安全软件的信任列表。")
+            if switched:
+                self.banner_text.setText(
+                    "默认数据目录无法写入，已自动改用程序所在文件夹的数据目录：\n"
+                    + str(self.config.root) + "\n"
+                    "原来的档案仍保留在 " + str(data_directory()) + "；"
+                    "如果想按默认方式使用，请把整个程序文件夹复制到普通目录"
+                    "（例如 C:\\NailongQuanxue 或 D:\\NailongQuanxue）后运行。")
+            else:
+                self.banner_text.setText(
+                    "数据目录无法写入：" + str(self.config.root) + "\n"
+                    + self.data_write_reason + "\n"
+                    "设置、照片、录像和档案都可能存不下来。可以把数据目录换到别处"
+                    "（例如 D:\\NailongData，程序会复制现有数据），或把本程序加入安全软件的信任列表。")
             self.data_banner.show()
         except RuntimeError:
             pass

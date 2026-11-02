@@ -23,3 +23,21 @@
 19. 在无 Python 的干净 Windows 10/11 x64 电脑完整解压运行，验证视频解码、摄像头、视觉核验及退出；不要只拷贝 EXE。
 
 默认数据位置 `%LOCALAPPDATA%\NailongQuanxue`：`settings.json`、`records.sqlite3`、`photos`（V1.1 遗留）、`videos`（V2.0）。测试数据/录像不要上传 GitHub。用户可随时用紧急退出终止测试，不必为完成清单强行继续。
+
+## 排查命令（无需进入界面）
+
+```powershell
+# 分阶段测试数据目录能否写入（不修改用户配置）
+.\NailongQuanxue.exe --save-probe
+.\NailongQuanxue.exe --save-probe "D:\NailongQuanxue"
+
+# 在真实界面里点一次「保存配置」，校验写入/密文/解密（结束会还原原配置）
+.\NailongQuanxue.exe --ui-save-test
+
+# 环境与摄像头自检，写一份 JSON
+.\NailongQuanxue.exe --self-check
+```
+
+若 `--save-probe` 里 `create` 阶段报 `PermissionError errno=13`，说明当前程序所在目录只允许写入自身目录树
+（例如程序被放在受限目录）。把整个程序文件夹复制到普通目录，或在便携模式下使用即可，详见
+`docs/配置保存失败诊断.md`。

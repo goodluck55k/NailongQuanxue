@@ -8,17 +8,23 @@ from pathlib import Path
 
 
 class ConfigWriteError(OSError):
-    """写入本地配置失败，带一条用户能看懂的中文说明。"""
+    """写入本地配置失败，带一条用户能看懂的中文说明和失败阶段。"""
 
-    def __init__(self, path, cause):
+    def __init__(self, path, cause, stages=None):
         self.path = Path(path)
         self.cause = cause
+        self.stages = dict(stages or {})
         self.errno_value = getattr(cause, "errno", None)
+        self.winerror = getattr(cause, "winerror", None)
+        self.failed_stage = next((name for name, value in self.stages.items()
+                                  if isinstance(value, str) and value != "ok"), "")
         super().__init__(getattr(cause, "errno", None), getattr(cause, "strerror", str(cause)))
 
     def __str__(self):
-        return ("无法写入配置文件 %s：%s"
-                % (self.path, describe_os_error(self.cause, self.path)))
+        text = "无法写入配置文件 %s：%s" % (self.path, describe_os_error(self.cause, self.path))
+        if self.failed_stage:
+            text += "（失败阶段：%s）" % self.failed_stage
+        return text
 
 
 def describe_os_error(error, path=None):
@@ -221,6 +227,136 @@ def relocate_data(source, target):
     return copied, errors
 
 
+def staged_write(target, payload):
+    """按阶段写文件，返回 (stages, error)。
+
+    阶段：ensure_dir → create → write → flush → close → replace。
+    出错时 stages 里保留每个阶段的结果，便于定位到底是哪一步被拒绝。
+    """
+    target = Path(target)
+    data = payload.encode("utf-8") if isinstance(payload, str) else payload
+    stages = {}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        stages["ensure_dir"] = _stage_error(error)
+        return stages, error
+    stages["ensure_dir"] = "ok"
+
+    handle = None
+    try:
+        handle = open(target, "wb")
+        stages["create"] = "ok"
+    except OSError as error:
+        stages["create"] = _stage_error(error)
+        return stages, error
+    try:
+        handle.write(data)
+        stages["write"] = "ok"
+        handle.flush()
+        stages["flush"] = "ok"
+        try:
+            os.fsync(handle.fileno())
+        except OSError:
+            pass
+    except OSError as error:
+        stages.setdefault("write", _stage_error(error))
+        try:
+            handle.close()
+        except OSError:
+            pass
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        return stages, error
+    finally:
+        try:
+            if handle is not None and not handle.closed:
+                handle.close()
+        except OSError:
+            pass
+    stages["close"] = "ok"
+    return stages, None
+
+
+def _stage_error(error):
+    return "%s errno=%s winerror=%s" % (type(error).__name__, getattr(error, "errno", None),
+                                        getattr(error, "winerror", None))
+
+
+def executable_directory():
+    """返回当前程序所在目录（打包后是 EXE 目录，源码运行时是项目目录）。"""
+    import sys
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def portable_directory():
+    """程序所在目录下的便携数据目录（用户把程序放在受限目录时用得上）。"""
+    return executable_directory() / "NailongData"
+
+
+def probe_environment():
+    """一次性探测几个关键位置是否可写，用于诊断与自动降级。"""
+    data = data_directory()
+    ok_data, reason_data = writable(data)
+    exe_dir = executable_directory()
+    ok_exe, reason_exe = writable(exe_dir)
+    temp_dir = None
+    for key in ("TEMP", "TMP"):
+        value = os.environ.get(key)
+        if value:
+            temp_dir = Path(value)
+            break
+    ok_temp = False
+    reason_temp = ""
+    if temp_dir is not None:
+        ok_temp, reason_temp = writable(temp_dir)
+    return {
+        "executable": sys_executable(),
+        "frozen": bool(getattr(__import__("sys"), "frozen", False)),
+        "data_directory": str(data),
+        "data_writable": ok_data,
+        "data_reason": reason_data,
+        "exe_directory": str(exe_dir),
+        "exe_writable": ok_exe,
+        "exe_reason": reason_exe,
+        "temp_directory": str(temp_dir) if temp_dir else "",
+        "temp_writable": ok_temp,
+        "temp_reason": reason_temp,
+        "portable_directory": str(portable_directory()),
+        "portable_writable": writable(portable_directory())[0],
+    }
+
+
+def sys_executable():
+    import sys
+    return sys.executable
+
+
+def usable_data_directory():
+    """选一个真正能写的数据目录。
+
+    顺序：显式设置/记忆的目录 → 默认用户目录（可写才用）→ 程序目录下的 NailongData。
+    程序目录若也只能读，则仍然返回默认目录，交给界面提示。
+    """
+    preferred = data_directory()
+    try:
+        if writable(preferred)[0]:
+            return preferred
+    except OSError:
+        pass
+    portable = portable_directory()
+    try:
+        if writable(portable)[0]:
+            return portable
+    except OSError:
+        pass
+    return preferred
+
+
 def data_directory():
     """解析数据目录。任何一步失败都不能让程序启动崩溃。"""
     override = os.environ.get("NAILONG_DATA_DIR")
@@ -273,7 +409,7 @@ class ConfigStore:
             except (OSError, ValueError):
                 pass
         try:
-            return Path(data_directory())
+            return Path(usable_data_directory())
         except Exception:
             pass
         try:
@@ -324,15 +460,26 @@ class ConfigStore:
         temporary = self.path.with_suffix(".json.tmp")
         payload = json.dumps(values, ensure_ascii=False, indent=2)
         last = None
+        stages = {}
         for attempt in range(3):
+            stages, error = staged_write(temporary, payload)
+            if error is not None:
+                last = error
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if attempt < 2:
+                    time.sleep(0.12 * (attempt + 1))
+                continue
             try:
-                temporary.write_text(payload, encoding="utf-8")
                 temporary.replace(self.path)
+                stages["replace"] = "ok"
                 last = None
                 break
-            except OSError as error:
-                # 安全软件扫描、另一个进程短暂占用都会造成瞬时 EACCES，重试即可。
-                last = error
+            except OSError as exc:
+                last = exc
+                stages["replace"] = _stage_error(exc)
                 try:
                     temporary.unlink(missing_ok=True)
                 except OSError:
@@ -341,8 +488,11 @@ class ConfigStore:
                     time.sleep(0.12 * (attempt + 1))
         if last is not None:
             logging.getLogger("NailongQuanxue").error(
-                "Config save failed: %s", self.path, exc_info=last)
+                "Config save failed at stage %s: %s (stages=%s)",
+                next((name for name, value in stages.items()
+                      if isinstance(value, str) and value != "ok"), "unknown"),
+                self.path, stages, exc_info=last)
             # 不要留下半成品；也不要在写失败时清空用户原有配置。
-            raise ConfigWriteError(self.path, last) from last
+            raise ConfigWriteError(self.path, last, stages) from last
         self.values = values
         self.error = None

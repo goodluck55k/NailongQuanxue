@@ -19,10 +19,10 @@ def positive_seconds(value):
 
 
 def log_folder():
-    """日志目录；拿不到就退回用户主目录，绝不因为日志而崩溃。"""
+    """日志目录；优先可写的数据目录，拿不到就退回用户主目录。"""
     try:
-        from app.config_store import data_directory
-        return data_directory() / "logs"
+        from app.config_store import usable_data_directory
+        return usable_data_directory() / "logs"
     except Exception:
         return Path(os.path.expanduser("~")) / "NailongQuanxue-logs"
 
@@ -91,13 +91,160 @@ def write_self_check(path=None):
     return 0
 
 
+def write_save_probe(path=None):
+    """分阶段试写一个临时文件，报告每一步的结果（不碰用户真实配置）。"""
+    import json
+    from app.config_store import (data_directory, probe_environment, staged_write,
+                                  usable_data_directory)
+
+    folder = Path(path) if path else data_directory()
+    target = folder / "save-probe.json"
+    stages, error = staged_write(target, '{"probe": true}')
+    if error is None:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+    payload = {
+        "target": str(target),
+        "ok": error is None,
+        "stages": stages,
+        "error": None if error is None else "%s errno=%s winerror=%s" % (
+            type(error).__name__, getattr(error, "errno", None), getattr(error, "winerror", None)),
+        "data_directory": str(data_directory()),
+        "usable_data_directory": str(usable_data_directory()),
+        "environment": probe_environment(),
+        "settings_roundtrip": settings_roundtrip(usable_data_directory()),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    ok = bool(payload["settings_roundtrip"].get("ok"))
+    return 0 if ok else 2
+
+
+def settings_roundtrip(folder):
+    """在给定目录里跑一遍真实的 save_settings + 重新读取 + DPAPI 解密。
+
+    用独立的 probe-root 子目录和假 Key，绝不碰用户的 settings.json。
+    """
+    import shutil
+    from app.ai_config import AiSettings, read_settings, save_settings
+    from app.config_store import ConfigStore
+
+    root = Path(folder) / "probe-root"
+    result = {"root": str(root)}
+    try:
+        shutil.rmtree(root, ignore_errors=True)
+        store = ConfigStore(root)
+        sample = AiSettings(protocol="openai", base_url="https://api.deepseek.com",
+                            model="probe-model", api_key="sk-probe-not-a-real-key")
+        written = save_settings(store, sample, verified=False)
+        raw = (root / "settings.json").read_text(encoding="utf-8")
+        reloaded = read_settings(__import__("json").loads(raw))
+        result.update({
+            "ok": (written.base_url == sample.base_url
+                   and written.model == sample.model
+                   and reloaded.api_key == sample.api_key
+                   and reloaded.protocol == "openai"),
+            "sealed_in_file": "dpapi:" in raw,
+            "plaintext_key_in_file": sample.api_key in raw,
+            "recovered_key": reloaded.api_key == sample.api_key,
+            "protocol": reloaded.protocol,
+            "base_url": reloaded.base_url,
+            "model": reloaded.model,
+        })
+    except Exception as error:  # noqa: BLE001 - 诊断命令要报告而不是抛出
+        result.update({"ok": False, "error": "%s: %s" % (type(error).__name__, error)})
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return result
+
+
+def gui_save_test():
+    """在真实 Qt 界面里点一次「保存配置」，验证打包后的保存链路（含 DPAPI）。
+
+    会临时覆盖数据目录里的 settings.json，结束后按原字节还原。
+    """
+    import json
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from app.ai_config import read_settings
+    from app.ai_panel import AiSettingsPanel
+    from app.config_store import ConfigStore, usable_data_directory
+
+    report = {"data_directory": str(usable_data_directory())}
+    app = QApplication.instance() or QApplication([])
+    store = ConfigStore(usable_data_directory())
+    original = store.path.read_bytes() if store.path.exists() else None
+    panel = None
+    try:
+        panel = AiSettingsPanel(store)
+        panel.show()
+        app.processEvents()
+        panel.protocol.setCurrentIndex(0)
+        panel.base_url.setText("https://api.deepseek.com")
+        panel.api_key.setText("sk-probe-not-a-real-key")
+        panel.model.setText("probe-model")
+        app.processEvents()
+        QTest.mouseClick(panel.save_button, Qt.LeftButton)
+        for _ in range(20):
+            app.processEvents()
+            QTest.qWait(50)
+        report["status_text"] = panel.status.text()
+        raw = store.path.read_text(encoding="utf-8") if store.path.exists() else ""
+        reloaded = read_settings(json.loads(raw)) if raw else None
+        report.update({
+            "file_written": bool(raw),
+            "sealed_in_file": "dpapi:" in raw,
+            "plaintext_key_in_file": "sk-probe-not-a-real-key" in raw,
+            "protocol": reloaded.protocol if reloaded else "",
+            "base_url": reloaded.base_url if reloaded else "",
+            "model": reloaded.model if reloaded else "",
+            "key_recovered": bool(reloaded and reloaded.api_key == "sk-probe-not-a-real-key"),
+        })
+        report["ok"] = bool(report["file_written"] and report["sealed_in_file"]
+                            and not report["plaintext_key_in_file"]
+                            and report["key_recovered"]
+                            and report["model"] == "probe-model")
+    except Exception as error:  # noqa: BLE001 - 诊断命令要报告而不是抛出
+        report.update({"ok": False, "error": "%s: %s" % (type(error).__name__, error)})
+    finally:
+        try:
+            if panel is not None:
+                panel.close()
+        except Exception:
+            pass
+        try:
+            if original is None:
+                store.path.unlink(missing_ok=True)
+            else:
+                store.path.write_bytes(original)
+        except OSError as error:
+            report["restore_error"] = str(error)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report.get("ok") else 2
+
+
 def main():
     parser = argparse.ArgumentParser(description="奶龙劝学 — 少玩一会儿，多学一点")
     parser.add_argument("--test-seconds", type=positive_seconds,
                        help="自动开始指定秒数的开发计时，例如 15")
     parser.add_argument("--self-check", nargs="?", const="", default=None, metavar="PATH",
                        help="只写一份环境与摄像头诊断 JSON 后退出；省略 PATH 时写入数据目录")
+    parser.add_argument("--save-probe", nargs="?", const="", default=None, metavar="DIR",
+                       help="分阶段测试目录是否可写（不修改用户配置），输出 JSON 后退出")
+    parser.add_argument("--ui-save-test", action="store_true",
+                       help="在真实界面里点一次「保存配置」并校验结果（测试用，会还原原配置）")
     args = parser.parse_args()
+    if args.ui_save_test:
+        return gui_save_test()
+    if args.save_probe is not None:
+        try:
+            return write_save_probe(args.save_probe)
+        except Exception as error:  # noqa: BLE001 - 诊断命令失败也要给中文说明
+            print("保存探测未能完成：%s: %s" % (type(error).__name__, error), file=sys.stderr)
+            return 2
     if args.self_check is not None:
         try:
             return write_self_check(args.self_check)
